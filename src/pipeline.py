@@ -76,6 +76,7 @@ async def process_listing_item(item: dict, conn, sem: asyncio.Semaphore) -> dict
             llm_agent_signals=extracted.get("agent_signals", []),
             llm_agent_confidence=extracted.get("agent_confidence", ""),
             llm_agent_reasoning=extracted.get("agent_reasoning", ""),
+            seller_item_count=item.get("seller_item_count"),
         )
         extracted["_agent_llm_confidence"] = detect_meta.get("llm_confidence", "")
         extracted["_agent_llm_signals"] = detect_meta.get("llm_signals", [])
@@ -184,6 +185,7 @@ async def fetch_new_listings(
     limit_per_source: int = 10,
     keyword_hint: str = "",
     focus_area: str = "",
+    progress_callback=None,  # async callable(stage: str) — 进度回调
 ) -> list[dict]:
     """抓取所有来源的新房源。
 
@@ -197,11 +199,16 @@ async def fetch_new_listings(
         limit_per_source: 每源抓取上限
         keyword_hint: 用户搜索关键词（用于定向搜索）
         focus_area: 深潜目标区域（如 "下沙"），启用区域专项关键词矩阵
+        progress_callback: 可选异步回调，接收阶段描述字符串
     """
+    async def _progress(stage: str):
+        if progress_callback:
+            await progress_callback(stage)
     all_raw_items: list[dict] = []
 
     # ——— 豆瓣: HTTP 直接抓取（替代 Firecrawl）———
     try:
+        await _progress("正在爬取豆瓣...")
         if focus_area:
             douban_kws = [f"{focus_area}租房", f"{focus_area}转租", f"{focus_area}合租",
                           f"{focus_area}个人转租", f"{focus_area}房东直租"]
@@ -225,6 +232,7 @@ async def fetch_new_listings(
 
     # ——— 闲鱼: Async Playwright（cookie 登录态）———
     if has_valid_cookies():
+        await _progress("正在爬取闲鱼...")
         logger.info("fetch: 使用 Playwright 闲鱼抓取（cookie 已就绪）")
         if focus_area:
             xy_keywords = build_area_keywords(focus_area)
@@ -248,6 +256,7 @@ async def fetch_new_listings(
 
     # ——— 微博: Playwright + 内部 API ———
     try:
+        await _progress("正在爬取微博...")
         if focus_area:
             from src.crawler.weibo_crawler import WEIBO_KEYWORDS
             wb_kws = WEIBO_KEYWORDS[:5]
@@ -289,6 +298,7 @@ async def fetch_new_listings(
         return []
 
     # ——— 豆瓣详情抓取（仅对豆瓣 item，其他已有 content）———
+    await _progress("正在获取帖子详情...")
     douban_detail_sem = asyncio.Semaphore(3)  # 豆瓣限流严格
 
     async def _maybe_fetch_detail(item: dict) -> dict:
@@ -324,6 +334,7 @@ async def fetch_new_listings(
     pairs_ready = valid_pairs
 
     # ——— LLM 提取管线 ———
+    await _progress("正在 AI 提取房源信息...")
     conn = get_conn()
     try:
         sem = asyncio.Semaphore(_parse_llm_concurrency())
@@ -343,6 +354,7 @@ async def fetch_new_listings(
         conn.commit()
 
         # ——— 入库后批量重评中介 ———
+        await _progress("正在收尾处理...")
         if new_listings:
             from src.detector.agent_detector import reevaluate_all
             try:

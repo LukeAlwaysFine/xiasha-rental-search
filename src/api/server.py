@@ -90,6 +90,7 @@ _RATE_WINDOW = int(os.getenv("RATE_WINDOW", "60"))  # 秒
 _RATE_MAX_SEARCH = int(os.getenv("RATE_MAX_SEARCH", "30"))    # /api/search: 30 req/min
 _RATE_MAX_IMPORT = int(os.getenv("RATE_MAX_IMPORT", "2"))     # /api/import: 2 req/min
 _RATE_MAX_FETCH = int(os.getenv("RATE_MAX_FETCH", "2"))       # /api/fetch: 2 req/min
+_RATE_MAX_POSTER_CHECK = int(os.getenv("RATE_MAX_POSTER_CHECK", "1"))  # /api/poster-check: 1 req/min
 
 
 def _check_rate_limit(ip: str, max_req: int, endpoint: str = "search") -> bool:
@@ -159,12 +160,19 @@ async def _cleanup_enhance_cache():
                 del _enhance_cache[oldest]
 
 
+# ——— 手动抓取状态跟踪 ———
+# total_stages: 准备中(1) + 豆瓣(2) + 闲鱼(3) + 微博(4) + 详情(5) + AI提取(6) + 收尾(7) = 7
+_fetch_status = {"running": False, "new_count": 0, "started_at": None, "finished_at": None, "error": None, "stage": "", "stage_started_at": None, "stage_times": [], "total_stages": 7}
+
+# ——— Poster 中介检查状态 ———
+_poster_check_status = {"running": False, "found": 0, "checked": 0, "total": 0, "started_at": None, "finished_at": None, "error": None}
+
 # ——— 定时任务 ———
 scheduler = AsyncIOScheduler()
 
 
 async def scheduled_agent_reeval():
-    """每小时：全库中介重新评估（利用已积累的 poster/contact 数据）。"""
+    """每小时：全库中介重新评估（纯 SQL，利用已积累的 poster/contact 数据，不消耗 LLM）。"""
     from src.detector.agent_detector import reevaluate_all
     logger.info("scheduled_agent_reeval: 开始全库中介重评...")
     try:
@@ -176,6 +184,20 @@ async def scheduled_agent_reeval():
             conn.close()
     except Exception as e:
         logger.error(f"scheduled_agent_reeval: 失败: {e}", exc_info=True)
+
+
+async def scheduled_poster_check():
+    """每6小时：访问发帖人闲鱼主页，检测中介（Playwright 自动化，不消耗 LLM）。"""
+    from src.crawler.xianyu_async import check_posters_for_agents
+    logger.info("scheduled_poster_check: 开始中介检测...")
+    try:
+        result = await check_posters_for_agents(headless=True)
+        logger.info(
+            f"scheduled_poster_check: 检查 {result['checked']} 个发帖人, "
+            f"发现 {result['found']} 个中介"
+        )
+    except Exception as e:
+        logger.error(f"scheduled_poster_check: 失败: {e}", exc_info=True)
 
 
 async def scheduled_cleanup():
@@ -246,19 +268,19 @@ async def scheduled_fetch():
 async def lifespan(app: FastAPI):
     init_db()
     # 启动预热: 用 asyncio.create_task 在后台运行，不阻塞请求
-    scheduler.add_job(scheduled_fetch, "interval", hours=6, id="fetch",
-                      coalesce=True, misfire_grace_time=3600)
+    # 抓取已改为手动触发（/api/fetch），不再定时执行
     scheduler.add_job(scheduled_cleanup, "interval", hours=6, id="cleanup",
                       coalesce=True, misfire_grace_time=3600)
     scheduler.add_job(scheduled_agent_reeval, "interval", hours=1, id="agent_reeval",
-                      coalesce=True, misfire_grace_time=600)
+                      coalesce=True, misfire_grace_time=1800)
+    scheduler.add_job(scheduled_poster_check, "interval", hours=6, id="poster_check",
+                      coalesce=True, misfire_grace_time=3600)
     scheduler.start()
     # 启动时执行一次全量中介修正
     asyncio.create_task(_startup_agent_fix())
     # 启动增强缓存清理任务
     asyncio.create_task(_cleanup_enhance_cache())
-    # Warmup as background task (not via scheduler, to avoid thread executor issues with Playwright)
-    asyncio.create_task(_warmup_fetch())
+    # 抓取已改为手动触发，不再需要启动预热
     yield
     scheduler.shutdown()
     await close_http_client()
@@ -563,9 +585,29 @@ async def list_favorite_ids():
         conn.close()
 
 
+@app.get("/api/fetch/status")
+async def fetch_status():
+    """查询手动抓取状态（供前端轮询）。"""
+    return {
+        "running": _fetch_status["running"],
+        "new_count": _fetch_status["new_count"],
+        "started_at": _fetch_status["started_at"],
+        "finished_at": _fetch_status["finished_at"],
+        "error": _fetch_status["error"],
+        "stage": _fetch_status.get("stage", ""),
+        "stage_started_at": _fetch_status.get("stage_started_at"),
+        "stage_times": _fetch_status.get("stage_times", []),
+        "total_stages": _fetch_status.get("total_stages", 7),
+    }
+
+
 @app.get("/api/fetch")
 async def trigger_fetch(request: Request):
-    """手动触发一次抓取（调试用）。需要 X-Auth-Token 认证。"""
+    """手动触发一次抓取。已在运行时返回 409。"""
+    global _fetch_status
+    if _fetch_status["running"]:
+        return JSONResponse({"error": "抓取正在进行中", "started_at": _fetch_status["started_at"], "stage": _fetch_status.get("stage", "")}, status_code=409)
+
     # M12: 简单共享密钥认证，防止未授权触发资源密集型操作
     auth_token = os.getenv("FETCH_AUTH_TOKEN", "")
     if auth_token:
@@ -580,18 +622,115 @@ async def trigger_fetch(request: Request):
     )
     if not _check_rate_limit(client_ip, _RATE_MAX_FETCH, "fetch"):
         return JSONResponse({"error": "请求过于频繁，请稍后再试"}, status_code=429)
+
+    async def _on_progress(stage: str):
+        global _fetch_status
+        now = time.time()
+        # 记录上一阶段的耗时
+        prev_stage = _fetch_status.get("stage", "")
+        prev_started = _fetch_status.get("stage_started_at")
+        if prev_stage and prev_started:
+            _fetch_status["stage_times"].append({
+                "stage": prev_stage,
+                "duration": round(now - prev_started, 1)
+            })
+        _fetch_status["stage"] = stage
+        _fetch_status["stage_started_at"] = now
+
+    _fetch_status = {"running": True, "new_count": 0, "started_at": time.time(), "finished_at": None, "error": None, "stage": "准备中...", "stage_started_at": time.time(), "stage_times": [], "total_stages": 7}
+
+    def _record_final_stage(final_stage: str):
+        """在最终状态写入前，记录当前运行阶段的耗时。"""
+        global _fetch_status
+        now = time.time()
+        cur_stage = _fetch_status.get("stage", "")
+        cur_started = _fetch_status.get("stage_started_at")
+        if cur_stage and cur_started:
+            _fetch_status["stage_times"].append({
+                "stage": cur_stage,
+                "duration": round(now - cur_started, 1)
+            })
+        _fetch_status["stage"] = final_stage
+        _fetch_status["stage_started_at"] = None
+        _fetch_status["stage_times"] = _fetch_status.get("stage_times", [])
+
     try:
-        # M13: 超时保护，防止爬虫挂起导致请求无限阻塞
-        new_listings = await asyncio.wait_for(
-            fetch_new_listings(limit_per_source=50), timeout=120
-        )
+        new_listings = await fetch_new_listings(limit_per_source=50, progress_callback=_on_progress)
+        _record_final_stage("已完成")
+        _fetch_status["running"] = False
+        _fetch_status["new_count"] = len(new_listings)
+        _fetch_status["finished_at"] = time.time()
+        _fetch_status["error"] = None
         return {"new_count": len(new_listings)}
-    except asyncio.TimeoutError:
-        logger.error("trigger_fetch: timeout after 120s")
-        return JSONResponse({"error": "抓取超时，请稍后重试"}, status_code=503)
     except Exception as e:
+        _record_final_stage("出错")
+        _fetch_status["running"] = False
+        _fetch_status["new_count"] = 0
+        _fetch_status["finished_at"] = time.time()
+        _fetch_status["error"] = "抓取失败，请查看服务端日志"
         logger.error(f"trigger_fetch failed: {e}", exc_info=True)
         return JSONResponse({"error": "抓取服务暂时不可用，请稍后重试"}, status_code=503)
+
+
+# ——— Poster 中介检查（Playwright 自动化） ———
+@app.post("/api/poster-check")
+async def trigger_poster_check(request: Request):
+    """手动触发中介检测：访问发帖人闲鱼主页，数出租房数量。已在运行时返回 409。"""
+    global _poster_check_status
+    if _poster_check_status["running"]:
+        return JSONResponse({
+            "error": "中介检测正在进行中",
+            "started_at": _poster_check_status["started_at"],
+        }, status_code=409)
+
+    auth_token = os.getenv("FETCH_AUTH_TOKEN", "")
+    if auth_token:
+        provided = request.headers.get("X-Auth-Token", "")
+        if provided != auth_token:
+            return JSONResponse({"error": "未授权"}, status_code=401)
+
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    client_ip = forwarded.split(",")[0].strip() if forwarded else (
+        request.client.host if request.client else "127.0.0.1"
+    )
+    if not _check_rate_limit(client_ip, _RATE_MAX_POSTER_CHECK, "poster_check"):
+        return JSONResponse({"error": "请求过于频繁，请稍后再试"}, status_code=429)
+
+    _poster_check_status = {
+        "running": True, "found": 0, "checked": 0, "total": 0,
+        "started_at": time.time(), "finished_at": None, "error": None,
+    }
+
+    try:
+        from src.crawler.xianyu_async import check_posters_for_agents
+        result = await check_posters_for_agents(headless=True)
+        _poster_check_status["running"] = False
+        _poster_check_status["found"] = result.get("found", 0)
+        _poster_check_status["checked"] = result.get("checked", 0)
+        _poster_check_status["total"] = result.get("total", 0)
+        _poster_check_status["finished_at"] = time.time()
+        _poster_check_status["error"] = result.get("error")
+        return {"found": result.get("found", 0), "checked": result.get("checked", 0), "total": result.get("total", 0)}
+    except Exception as e:
+        _poster_check_status["running"] = False
+        _poster_check_status["finished_at"] = time.time()
+        _poster_check_status["error"] = "检测失败"
+        logger.error(f"trigger_poster_check failed: {e}", exc_info=True)
+        return JSONResponse({"error": "检测服务暂时不可用"}, status_code=503)
+
+
+@app.get("/api/poster-check/status")
+async def poster_check_status():
+    """查询中介检测状态（供前端轮询）。"""
+    return {
+        "running": _poster_check_status["running"],
+        "found": _poster_check_status["found"],
+        "checked": _poster_check_status["checked"],
+        "total": _poster_check_status["total"],
+        "started_at": _poster_check_status["started_at"],
+        "finished_at": _poster_check_status["finished_at"],
+        "error": _poster_check_status["error"],
+    }
 
 
 async def _import_listings(data: list[dict]) -> int:
@@ -640,6 +779,7 @@ async def _import_listings(data: list[dict]) -> int:
                 llm_agent_signals=extracted.get("agent_signals", []),
                 llm_agent_confidence=extracted.get("agent_confidence", ""),
                 llm_agent_reasoning=extracted.get("agent_reasoning", ""),
+                seller_item_count=item.get("seller_item_count"),
             )
         finally:
             detect_conn.close()

@@ -1,5 +1,149 @@
 # Bug 记录与修复
 
+## 2026-07-12：关键词矩阵优化 — 聚焦下沙、扩大覆盖
+
+### 现象
+
+80 个关键词中 24/25 区域与下沙无关（临平、闲林、良渚…），类型仅 3 个（租房/转租/整租），缺少合租、单间、一室、两室、公寓等高频词，没有任何小区/公寓名直搜。大量 poster 在 DB 中仅 1 条记录。
+
+### 修复
+
+**完全重写关键词生成**（`src/crawler/xianyu_async.py`）：
+- 区域：25 个杭州各区 → 15 个下沙子区域（金沙湖、高沙、文泽路、下沙江滨…）
+- 类型：3 → 8（+合租/单间/一室/两室/公寓）
+- 新增 40 个核心小区/公寓直搜（伊萨卡国际城、世茂江滨花园…）
+- 总量：80 → 165 个关键词
+
+**配套优化**：
+- poster check 移除上限 + 超时，每次扫全部 <3 条 poster，`ORDER BY RANDOM()`
+- 进度条显示预计剩余时间（`已耗时/已完成 × 剩余`）
+- 操作状态栏持久化（localStorage），成功/失败均记录，页面刷新恢复
+- 按钮文案：「🔄 抓取房源」「🔍 检查是否中介」
+- 抓取成功后自动链式执行中介检查（新增>0时，2s延迟）
+- 页面刷新恢复检测：操作进行中恢复进度条，刚好完成补记录
+
+### 涉及文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/crawler/xianyu_async.py` | `_DISTRICTS` + `_RENT_TYPES` + `_TOP_COMPOUNDS` 重写；移除 `max_posters`；加 `ORDER BY RANDOM()`；返回 `total` |
+| `src/api/server.py` | `_poster_check_status` 新增 `total`；调用移除 `max_posters` |
+| `src/web/index.html` | 按钮重命名 + 状态栏持久化 + 剩余时间估算 |
+| `CLAUDE.md` | 关键词数 199→165，按钮文案同步 |
+
+## 2026-07-12：Poster 扩展解耦 — 从抓取流程中拆分独立定时任务
+
+### 现象
+
+Poster 扩展（进闲鱼主页数出租房）嵌在抓取流程里，每批最多检查 8 个 poster。80 个关键词产出上百个不同 poster，绝大多数漏检。320 个单条 poster 标记为"个人"实际可能是中介。
+
+### 根因
+
+抓取和中介检查耦合在同一次 HTTP 请求（超时 480s），每个 poster 主页检查 ~20s，无法大量检查。
+
+### 修复
+
+**解耦为独立任务**：
+- 从 `crawl_xianyu_via_api()` 移除 poster 扩展代码
+- 提取为独立函数 `check_posters_for_agents()`，创建自己的 Playwright browser
+- 新增 APScheduler 定时任务：6h，扫描全部 DB 记录 <3 条的 poster（`ORDER BY RANDOM()`）
+- 新增 API：`POST /api/poster-check`（手动触发，409 防重入），`GET /api/poster-check/status`（含 total/checked 进度）
+- 前端 Header 新增 "🔍 检查是否中介" 按钮，显示预计剩余时间 + 进度 + 完成记录持久化
+
+### 涉及文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/crawler/xianyu_async.py` | 移除 poster 扩展代码块，新增 `check_posters_for_agents()` 独立函数 |
+| `src/api/server.py` | 新增 `scheduled_poster_check` 定时任务 + 2 个 API 端点 |
+| `src/web/index.html` | 新增按钮 `posterCheckBtn` + `triggerPosterCheck` 等 JS 函数 |
+
+## 2026-07-12：中介漏判 — 单条 poster 跨房源规则失效 + Poster 扩展抓取
+
+### 现象
+
+`t桃年11`、`西汉守时的使者` 等 poster 在闲鱼上发布了大量出租房源，但库里只抓到 1 条，被判为"个人"。
+
+### 根因
+
+三层问题叠加：
+
+1. **爬虫覆盖面不足** — MTOP 分页不可用，80 个关键词（后优化至 165）× ~30 条/词 只能覆盖部分房源。451 个 poster 在库中仅 1 条记录，跨房源规则 `COUNT(DISTINCT source_url) >= 3` 无从触发。
+
+2. **模板标题正则太窄** — `TITLE_TEMPLATE_RE` 强制要求 `\d{2,4}方`（面积数字），但大量中介标题不含面积。如 `杭州下沙大学城北碧桂园精装两室` 无法命中模板检测，"两" 也不在数字字符集 `[一二三四五六七八九十]` 中。
+
+3. **没有利用闲鱼用户主页** — 系统只能在本地 DB 内统计同 poster 数量，不会去闲鱼主页查看实际发布量。
+
+### 修复
+
+**模板标题正则放宽**（`src/detector/agent_detector.py`）：
+- `\d{2,4}方` → `(?:\d{2,4}方)?`（面积可选）
+- 数字字符集添加 `两`，租赁术语添加 `租房`
+- 效果：`杭州下沙大学城北碧桂园精装两室` → 命中模板 → 判"未知"
+
+**Poster 扩展**（`src/crawler/xianyu_async.py`）：
+- 主关键词爬完后，对 DB 中 ≤2 条的 poster，用 Playwright 模拟人工操作：
+  1. 打开一条他的帖子 → 找 `/personal?userId=` 链接
+  2. 进主页 → 数 `<a href="/item?id=">` 链接
+  3. 用关键词（`/月`、`整租`、`合租`、`一室`、`㎡` 等）判断是否为出租房
+  4. 出租房 ≥3 套 → 直接标中介
+- 已验证：`般若星泡菜味的法夏`（20/20 出租→中介），`通天代建模设计工作室`（1/20 出租→个人）
+- 每轮最多查 8 个 poster，超时 15s/个
+
+**`reevaluate_all` 频率提升**（`src/api/server.py`）：6h → 1h
+
+**平台级卖家房源数信号**（`src/detector/agent_detector.py`）：
+- `detect_with_llm` 新增 `seller_item_count` 参数
+- 如果 MTOP API 直接返回卖家总房源数且 ≥3 → +10 分 → 直接中介
+
+### 涉及文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/detector/agent_detector.py` | 模板标题正则放宽 + `seller_item_count` 参数和评分 |
+| `src/crawler/xianyu_async.py` | Poster 扩展（Playwright 模拟点主页）+ MTOP userId 提取 + 字段探测定 |
+| `src/pipeline.py` | 透传 `seller_item_count` |
+| `src/api/server.py` | `reevaluate_all` 间隔 6h→1h，fetch 超时 180s→480s |
+
+### 小修复（审查报告 P1/P2）
+
+| 编号 | 问题 | 文件 |
+|------|------|------|
+| H3 | API 错误消息泄露 `str(e)` | `server.py` |
+| M5 | 通勤下拉框 Enter 键被吞 | `index.html` |
+| M6 | `escapeAttr` 不转义单引号 | `index.html` |
+| M7 | Chip 缺少 `aria-pressed` | `index.html` |
+| M8 | `LLM_CONCURRENCY` 非整数崩溃 | `llm_reeval.py` |
+| M10 | `safeUrl` 双重控制字符清理 | `index.html` |
+
+## 2026-07-12：详情面板死代码 — C1 严重缺陷
+
+### 现象
+
+点击房源卡片无任何反应。房源详情只能通过地图标记间接查看。
+
+### 根因
+
+`handleCardClick(id)` 搜索 `document.getElementById('detail-' + id)`，但 `renderResults` 从未创建该 ID 的元素。整个 `.detail-panel` CSS 块和旧 `handleCardClick` 函数都是死代码。后续降级修复改为了切换卡片内 `.detail-info`（仅显示排序理由），但 `.detail-info.open` 无 CSS 规则，展开效果为零。图片从未在 UI 展示。
+
+### 修复
+
+实现完整的详情抽屉面板（仅 `src/web/index.html` ~360 行新增）：
+
+- **交互**：桌面端右侧 420px 抽屉滑入（`translateX`），移动端底部 80vh 弹出（`translateY`）
+- **内容**：图片画廊（横向 scroll-snap，空时虚线占位）、基本信息双列 grid、标签、AI 分析（`_llm_reason`）、联系方式+发布者、发布时间
+- **操作**：♥ 收藏（与 `toggleFav` 双向同步）+ 查看原帖
+- **关闭**：✕ 按钮 / 遮罩点击 / Escape 键
+- **状态**：骨架屏 → 内容 → 错误+重试（AbortController 防重复请求）
+- **暗色模式 + `prefers-reduced-motion`** 适配
+- **集成点**：`handleCardClick`、集群 marker 点击、`highlightMarker` 动态卡片插入、`toggleFav` 收藏同步
+
+### 涉及文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/web/index.html` | 删除无用 CSS + 新增 ~250 行 CSS + ~110 行 JS + HTML 容器。后端无需修改。 |
+
 ## 2026-07-12：UI 优化 — 交互 Bug 修复
 
 ### 地址下拉菜单被裁切

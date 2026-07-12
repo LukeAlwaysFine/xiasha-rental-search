@@ -128,6 +128,7 @@ def detect_with_llm(
     llm_agent_signals: list[str] | None = None,
     llm_agent_confidence: str = "",
     llm_agent_reasoning: str = "",
+    seller_item_count: int | None = None,
 ) -> tuple[str, list[str], dict]:
     """混合判定：LLM 推理 + regex 规则融合。
 
@@ -135,6 +136,7 @@ def detect_with_llm(
     - LLM 高置信 → 直接"中介"
     - LLM 无 → 直接"个人"（除非 regex 命中品牌名/多房源硬证据）
     - LLM 中/低 → regex 辅助判定
+    - seller_item_count ≥ 3 → 平台级强信号（卖家在闲鱼发布 ≥3 条 → 中介）
 
     返回: (标签, 命中规则列表, 元数据)
     元数据包含: llm_confidence, llm_signals, llm_reasoning, hybrid_score
@@ -182,12 +184,17 @@ def detect_with_llm(
                 regex_score += 4
                 break
 
-    # 4. 同账号多房源
+    # 4. 同账号多房源（DB 内统计）
     if conn and poster_id:
         count = count_by_poster(conn, poster_id)
         if count >= 3:
             regex_hits.append(f"同账号{count}条房源")
             regex_score += 6
+
+    # 4.5. 平台级卖家房源数（从 MTOP API 直接提取，无需 DB 积累）
+    if seller_item_count is not None and seller_item_count >= 3:
+        regex_hits.append(f"闲鱼卖家{seller_item_count}条房源")
+        regex_score += 10  # 平台级强信号，与 LLM 高置信等同
 
     # 5. 同联系方式多房源
     if conn and contact:
@@ -211,7 +218,7 @@ def detect_with_llm(
     # 必须在"LLM 无 → 个人"判断之前执行，否则会死逻辑
     TITLE_TEMPLATE_RE = re.compile(
         r'^[\w一-鿿]+(?:花园|公寓|大厦|小区|城|苑|府|庭|湾|星|里|园)'
-        r'\d{2,4}方.*(?:整租|合租|单间|转租|出租).*(?:[一二三四五六七八九十]居|[一二三四五六七八九十]室)',
+        r'(?:\d{2,4}方)?.*(?:整租|合租|单间|转租|出租|租房|[一二两三四五六七八九十]居|[一二两三四五六七八九十]室)',
     )
     HAS_PERSONAL_LANG = re.compile(r'[我自]|个人|房东直租|工作调动|离开杭州|回老家|换工作|急转')
 

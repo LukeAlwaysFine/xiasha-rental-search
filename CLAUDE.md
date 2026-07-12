@@ -39,35 +39,39 @@ export LD_LIBRARY_PATH=/tmp/chromium-libs/lib:$LD_LIBRARY_PATH  # 容器 Chromiu
 - **提取**: DeepSeek V4 Flash（AsyncOpenAI，thinking=disabled，40 并发）
 - **地理编码**: 高德 API 多策略重试 + Input Tips 回退；批量补齐（地址去重 + 2并发 + write_lock）。候选地址只追加命中区名，避免 9 区盲目遍历。闲鱼 MTOP 自带 GPS 覆盖 99.8%
 - **数据库**: SQLite WAL 模式，UPSERT 零值覆盖保护（`CASE WHEN IS NULL OR = 0`）。favorites 表 FK 关联 listings，级联删除。
-- **后端**: FastAPI + APScheduler（6h 深潜 + 6h URL 清理 + 1h 中介重评）
+- **后端**: FastAPI + APScheduler（6h URL 清理 + 6h poster 主页检测 + 1h 中介重评（纯SQL））。抓取手动触发（🔄 / 🔍 按钮 → 状态栏进度），抓取成功后自动链式执行中介检查
 - **前端**: 单页 HTML + 高德 JS API 2.0 + taste-skill 设计体系。收藏按钮（圆形 ♥）乐观更新 + API 同步，头部"我的收藏"入口。
 
 ## 数据流
 
 ```
-搜索 → search_and_fetch 无关键词默认"下沙" → SQLite 缓存（三级降级）→ 不足则后台三源抓取
+搜索 → search_and_fetch 无关键词默认"下沙" → SQLite 缓存（三级降级）→ 手动抓取补数据
 → AsyncOpenAI 并行提取（40并发，is_rental 默认 false）
 → API 坐标优先（闲鱼 MTOP 6 路径探测）→ 高德 geocode 兜底
-→ LLM+Regex 混合中介检测 → 入库 → batch_geocode_missing + reevaluate_all
-→ LLM 重排/去重 → 前端地图（全量 markers ≤1000）+ 列表（50条分页）→ 30s 轮询新数据
+→ LLM+Regex 混合中介检测 → 入库 → batch_geocode_missing + reevaluate_all（1h SQL 批量修正）
+→ poster 主页检测（6h，Playwright 进闲鱼主页数出租房，≥3 标中介）
+→ LLM 重排/去重 → 前端地图（全量 markers ≤1000）+ 列表（50条分页）
+→ 抓取成功后自动链式 poster 检查（新增>0时触发，2s延迟）
 ```
 
 ## 架构决策
 
 ### 闲鱼抓取
 
-Playwright 拦截 MTOP API，从 JSON 直接提取结构化字段。MTOP 分页因 sign 校验不可用，策略：**199 个下沙专项关键词 × ~30 条/词**。
+Playwright 拦截 MTOP API，从 JSON 直接提取结构化字段。MTOP 分页因 sign 校验不可用，策略：**~165 个下沙专项关键词 × ~30 条/词**（15 子区域 × 8 类型 + 40 核心小区/公寓）。
 
-⚠️ 反爬：headless 触发 CAPTCHA，依赖首次导航的 API 拦截窗口期。80 关键词 warmup ~7s/词。容器需 Chromium libs 预装至 `/tmp/chromium-libs/lib`，导航用 `wait_until="domcontentloaded"` 超时 15s。
+⚠️ 反爬：headless 触发 CAPTCHA，依赖首次导航的 API 拦截窗口期。容器需 Chromium libs 预装至 `/tmp/chromium-libs/lib`，导航用 `wait_until="domcontentloaded"` 超时 15s。
 
-绕过 LLM 的字段：`api_address`（杭州+area+location）、`poster_id`（userNickName，用于中介检测）、`api_images`（多字段名合并去重）、`api_lng/api_lat`（6 路径探测，覆盖率 99.8%）。`publish_time` 入库前归一化为 ISO 8601（微博 HTTP date → UTC）。
+绕过 LLM 的字段：`api_address`（杭州+area+location）、`poster_id`（userNickName）、`api_images`（多字段名合并去重）、`api_lng/api_lat`（6 路径探测，覆盖率 99.8%）。`publish_time` 入库前归一化为 ISO 8601。
 
 ### 中介检测（LLM + Regex 混合）
 
 LLM 提取时同步分析 agent_signals/confidence/reasoning（零额外调用），`detect_with_llm()` 混合判定：
-- 评分：品牌名 +8 / 话术 +3 / 名称关键词 +4 / 同 poster ≥3 条 +6 / 同 contact ≥2 条 +6
+- 评分：品牌名 +8 / 话术 +3 / 名称关键词 +4 / 同 poster ≥3 条 +6 / 同 contact ≥2 条 +6 / MTOP 卖家房源数 ≥3 → +10
+- 模板标题正则：纯结构描述+无个人语言 → 至少"未知"（不强制要求面积，匹配含"两室"等标题）
 - 判定：≥6 中介 / 3-5 未知 / <3 个人
-- 入库后 `reevaluate_all()` 批量修正（R1: 同 poster ≥3，COUNT(DISTINCT)；R2: 同 contact ≥2；R3: 参数化 LIKE + 反模式排除）
+- 入库后 `reevaluate_all()` 每小时批量修正（纯 SQL）：同 poster ≥3 / 同 contact ≥2 / 名称 LIKE
+- 独立定时任务（6h）：Playwright 进闲鱼主页数出租房，≥3 标中介，前端按钮手动触发
 
 ### 数据入库管线
 
@@ -90,7 +94,9 @@ LLM 提取时同步分析 agent_signals/confidence/reasoning（零额外调用�
 | `GET /api/search/enhance` | LLM 增强结果缓存（TTL 120s） |
 | `GET /api/listing/{id}` | 单条详情 |
 | `GET /api/geocode` / `/api/inputtips` | 地址→坐标 / 输入提示 |
-| `GET /api/fetch` / `POST /api/import` | 手动抓取 / 批量导入（2/min） |
+| `GET /api/fetch` / `/api/fetch/status` | 手动抓取（409 防重入）/ 抓取状态轮询 |
+| `POST /api/poster-check` / `/api/poster-check/status` | 中介检测（Playwright 进闲鱼主页）/ 检测状态轮询 |
+| `POST /api/import` | 批量导入（2/min） |
 | `GET /api/favorites` / `/ids` | 收藏列表（完整数据 / 仅 ID） |
 | `POST /api/favorites/{id}` | 添加收藏（UNIQUE 防重复） |
 | `DELETE /api/favorites/{id}` | 取消收藏 |
@@ -108,7 +114,7 @@ src/
   filter/        llm_rerank.py / llm_dedup.py
   db/            schema.py           # 三级降级 + UPSERT 零值覆盖
   api/           server.py           # 速率限制+threading.Lock + 缓存 mtime 刷新
-  web/           index.html          # escapeHtml 控制字符剥离 + 状态栏竞态防护
+  web/           index.html          # escapeHtml 控制字符剥离 + 状态栏竞态防护 + 详情抽屉面板
 .claude/agents/  qa-team / *-tester / code-reviewer / e2e-tester
 ```
 
@@ -134,11 +140,12 @@ taste-skill 体系：珊瑚红 `#ff6b6b`，深蓝灰 `#1a1a2e`。Geist 字体。
 - 移动端 (<900px)：浮动 🗺️/📋 按钮切换全屏地图/列表
 - 地图：初始聚焦下沙 `[120.38, 30.31]` zoom 15；全量 markers（≤1000）网格聚类（~16m）；6 层暖→冷六色渐变距离圈（200m-5km）；AMap.Scale 比例尺；金色参考标记（📍）；距离模式 zoom 14 聚焦通勤点
 - 标记三层覆盖：DB 预存 → 批量 geocode（2并发+逐条 gen 检查）→ 点击 fallback（`_offsetCoord` 去重叠）
-- 房源更新通知：状态栏脉冲动画 + 30s 轮询新数据
+- 房源更新：Header「🔄 抓取房源」手动触发抓取 +「🔍 检查是否中介」主页检测，状态栏实时进度 + 预计剩余时间 + 完成后持久化操作记录
 - 安全：`escapeHtml`/`escapeAttr` 剥离控制字符，`safeUrl` 白名单阻止伪协议，外链 `rel="noopener"`
 - 收藏：卡片圆形 ♥ 按钮乐观更新 → API 同步（失败回滚）；头部"♥ 我的收藏"按钮切换收藏模式；`_favIds` 数组驱动 UI 标记
 - 竞态控制：三轮询互斥，reset 清除旧 interval
 - 无障碍：`:focus-visible` 焦点环，交互元素 `aria-label`，时间标签颜色 ● 圆点
+- 详情面板：点击卡片 → 右侧抽屉滑入（桌面 420px）/ 底部弹出（移动端 80vh）。图片画廊横向 scroll-snap、基本信息双列 grid、AI 分析、联系方式、收藏同步。关闭：✕ / 遮罩 / Escape。加载骨架屏 + 错误重试。AbortController 防重复请求。与 `toggleFav` 双向同步收藏状态
 
 ### Python 约定
 

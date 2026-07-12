@@ -25,22 +25,36 @@ logger = logging.getLogger("rental.xianyu_async")
 
 COOKIE_FILE = Path(__file__).parent / "xianyu_state.json"
 
-# 大规模关键词矩阵：区域 × 类型交叉，每关键词 ~30 条
-# 80 关键词 × 30 条 = ~2400 raw → ~1200 去重 → ~800 入库
+# 下沙关键词矩阵：子区域 × 类型 + 核心小区/公寓
+# ~165 关键词 × ~30 条/词 ≈ ~5000 raw → ~2000 去重 → ~1200 入库
 _DISTRICTS = [
-    "下沙", "滨江", "未来科技城", "拱墅", "萧山", "西湖",
-    "上城", "钱塘", "九堡", "三墩", "西溪", "余杭", "临平",
-    "朝晖", "申花", "良渚", "闲林", "转塘", "丁桥", "半山",
-    "大关", "望江", "近江", "采荷", "四季青",
+    "下沙", "金沙湖", "高沙", "文泽路", "文海南路", "下沙江滨",
+    "云水", "大学城", "大学城北", "物美", "沿江", "下沙西",
+    "七格", "元成", "新加坡科技园",
 ]
-_RENT_TYPES = ["租房", "转租", "整租"]
+_RENT_TYPES = ["租房", "转租", "整租", "合租", "单间", "一室", "两室", "公寓"]
+_TOP_COMPOUNDS = [
+    "伊萨卡国际城", "世茂江滨花园", "保利东湾", "梦琴湾", "多蓝水岸",
+    "野风海天城", "金沙学府", "清雅苑", "月雅苑", "景冉佳园",
+    "阳光华城", "福雷德广场", "和达城", "宝龙城市广场", "盛泰名都",
+    "观澜时代", "杭曜之城", "朗诗万科城", "北银公寓", "天元公寓",
+    "新雁公寓", "东沙铭城", "学林铭城", "铭都雅苑", "德信早城",
+    "碧桂园", "东郡国际", "四季风景苑", "文汇苑", "大都文苑",
+    "云水苑", "高沙小区", "东岸嘉园", "香榭里花园", "金沙湖壹号",
+    "龙湖滟澜星", "海天城", "头格月雅城", "中豪七格", "松合幸福里",
+]
 
 def _build_keywords() -> list[str]:
-    """生成关键词矩阵：杭州 + 区域 + 类型"""
-    kw = ["杭州租房", "杭州转租", "杭州合租", "杭州整租", "杭州单间"]
+    """生成关键词矩阵：下沙子区域 × 类型 + 核心小区/公寓直搜"""
+    kw = [
+        "杭州下沙租房", "杭州下沙转租", "杭州下沙合租",
+        "杭州下沙整租", "杭州下沙单间",
+    ]
     for d in _DISTRICTS:
         for t in _RENT_TYPES:
-            kw.append(f"杭州 {d} {t}")
+            kw.append(f"{d} {t}")
+    for c in _TOP_COMPOUNDS:
+        kw.append(f"{c} 租房")
     return kw
 
 SEARCH_KEYWORDS = _build_keywords()
@@ -134,6 +148,7 @@ async def crawl_xianyu_via_api(
 
     all_items: list[dict] = []
     global_seen_ids: set[str] = set()
+    _mtop_keys_logged = False  # 首次 MTOP 响应时 dump 字段名
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -273,6 +288,21 @@ async def crawl_xianyu_via_api(
                     ex = main.get("exContent", {})
                     click = main.get("clickParam", {}).get("args", {})
 
+                    # 首次响应：dump 所有字段名帮助发现卖家统计字段
+                    if not _mtop_keys_logged:
+                        _mtop_keys_logged = True
+                        _wd = wrapper.get("data", {})
+                        logger.info(f"MTOP keys [wrapper]: {sorted(wrapper.keys())}")
+                        logger.info(f"MTOP keys [wrapper.data]: {sorted(_wd.keys())}")
+                        logger.info(f"MTOP keys [item_data]: {sorted(item_data.keys())}")
+                        logger.info(f"MTOP keys [main]: {sorted(main.keys())}")
+                        for _fn in ["userItemCount","sellerItemCount","userId","sellerId",
+                                     "memberId","userTotalItems","sellerTotal","publishCount",
+                                     "userStats","sellerStats","userInfo","sellerInfo"]:
+                            _v = wrapper.get(_fn) or _wd.get(_fn) or item_data.get(_fn) or main.get(_fn)
+                            if _v is not None:
+                                logger.info(f"MTOP debug: {_fn}={repr(_v)[:200]}")
+
                     if not ex:
                         continue
 
@@ -306,6 +336,17 @@ async def crawl_xianyu_via_api(
 
                     pic_url = ex.get("picUrl") or ex.get("imgUrl") or ex.get("mainPic") or ""
                     poster = (ex.get("userNickName") or "").strip()
+                    # 尝试提取用户 ID 和卖家总房源数（如果 MTOP 响应包含）
+                    _user_id = (ex.get("userId") or main.get("userId") or main.get("sellerId")
+                                or item_data.get("userId") or item_data.get("sellerId") or "")
+                    if not _user_id:
+                        _user_id = ""
+                    _seller_item_count = None
+                    for _sf in ["userItemCount", "sellerItemCount", "publishCount", "totalItemCount"]:
+                        _sv = ex.get(_sf) or main.get(_sf) or item_data.get(_sf) or wrapper.get("data", {}).get(_sf)
+                        if _sv is not None and isinstance(_sv, (int, float)):
+                            _seller_item_count = int(_sv)
+                            break
                     pub_ts = click.get("publishTime", "")
                     pub_time = ""
                     if pub_ts and pub_ts.isdigit():
@@ -339,24 +380,33 @@ async def crawl_xianyu_via_api(
 
                     # 收集图片 URL（尝试多个字段名变体 — H10: 扩展探测列表提高命中率）
                     api_images = []
+                    _img_hit_fields = []  # 追踪实际命中字段名
                     if pic_url:
                         api_images.append(pic_url)
+                        _img_hit_fields.append("picUrl/imgUrl/mainPic")
                     # 探测 exContent 和 main 中的图片列表字段
                     for img_field in ["imgs", "images", "imageList", "imgList", "headPic", "picList", "pics",
                                       "imageUrls", "imgUrls", "picUrls", "photoList", "thumbPics",
-                                      "itemImgs", "itemImages", "goodsImgs", "detailImgs"]:
+                                      "itemImgs", "itemImages", "goodsImgs", "detailImgs",
+                                      "imageInfoList", "imgInfoList", "pictUrl", "sellerImgs"]:
                         imgs = ex.get(img_field) or main.get(img_field) or []
                         if isinstance(imgs, list):
                             for img in imgs:
                                 if isinstance(img, str) and img not in api_images:
                                     api_images.append(img)
                                 elif isinstance(img, dict):
-                                    for k in ("url", "picUrl", "imgUrl", "src"):
+                                    for k in ("url", "picUrl", "imgUrl", "src", "imageUrl", "path"):
                                         v = img.get(k, "")
                                         if v and isinstance(v, str) and v not in api_images:
                                             api_images.append(v)
+                            if imgs:
+                                _img_hit_fields.append(img_field)
                         elif isinstance(imgs, str) and imgs not in api_images:
                             api_images.append(imgs)
+                            _img_hit_fields.append(img_field)
+                    if _img_hit_fields and not api_images:
+                        # 字段名命中但未提取到有效 URL → 记录字段名帮助排查
+                        logger.debug(f"MTOP image fields hit but empty URLs: {_img_hit_fields} for item {item_id}")
 
                     parts = [title]
                     if price_str:
@@ -378,6 +428,8 @@ async def crawl_xianyu_via_api(
                         "content": content[:4000],
                         "publish_time": pub_time,  # API 直接提取的时间，绕过 LLM
                         "poster_id": poster,  # API 直接提取的发帖人，用于中介检测
+                        "user_id": str(_user_id) if _user_id else "",  # 平台用户 ID
+                        "seller_item_count": _seller_item_count,  # 平台卖家总房源数（可能为 None）
                         "api_address": api_address,  # API 结构化地址，用于 geocode
                         "api_images": api_images,  # 结构化图片列表，合并到最终结果
                         "api_lng": api_lng,  # API 经纬度（如果可用，跳过 geocode）
@@ -396,6 +448,9 @@ async def crawl_xianyu_via_api(
         await browser.close()
 
     logger.info(f"Xianyu API done: {len(all_items)} items from {len(keywords)} keywords")
+    # H10: 汇总图片命中率
+    items_with_images = sum(1 for it in all_items if it.get("api_images"))
+    logger.info(f"Xianyu image hit rate: {items_with_images}/{len(all_items)} ({items_with_images*100//max(len(all_items),1)}%)")
     return all_items
 
 
@@ -419,6 +474,147 @@ async def crawl_xianyu_async(
         max_pages=max(1, limit_per_keyword // 30),
         headless=headless,
     )
+
+
+async def check_posters_for_agents(
+    poster_ids: list[str] | None = None,
+    headless: bool = True,
+) -> dict:
+    """独立的中介检测任务：访问发帖人闲鱼主页，数出租房。
+
+    对每个 poster：打开其一条帖子 → 找到 /personal?userId= 链接 →
+    进主页 → 数出租房（textContent 匹配关键词）→ ≥3 套则标为中介。
+
+    Args:
+        poster_ids: 指定要检查的 poster。None 则自动查 DB 中 <3 条的全部 poster。
+        headless: Playwright 是否 headless 模式。
+
+    Returns:
+        {"found": int, "checked": int, "error": str | None}
+    """
+    import random
+    from src.db.schema import get_conn as _get_conn
+
+    if not has_valid_cookies():
+        return {"found": 0, "checked": 0, "total": 0, "error": "Cookies not ready — 请先执行 python -m src.crawler.xianyu_async --login"}
+
+    # 解析要检查的 poster 列表
+    _to_check: list[tuple[str, str]] = []  # [(poster_id, sample_url), ...]
+    _conn = _get_conn()
+    try:
+        if poster_ids:
+            for pid in poster_ids:
+                row = _conn.execute(
+                    "SELECT source_url FROM listings WHERE poster_id=? LIMIT 1",
+                    (pid,),
+                ).fetchone()
+                if row:
+                    _to_check.append((pid, row[0]))
+        else:
+            rows = _conn.execute("""
+                SELECT poster_id, MIN(source_url) as sample_url
+                FROM listings
+                WHERE poster_id IS NOT NULL AND poster_id != '' AND poster_id != 'None'
+                GROUP BY poster_id
+                HAVING COUNT(DISTINCT source_url) < 3
+                ORDER BY RANDOM()
+            """).fetchall()
+            for r in rows:
+                _to_check.append((r[0], r[1]))
+    finally:
+        _conn.close()
+
+    if not _to_check:
+        return {"found": 0, "checked": 0, "total": 0, "error": None}
+
+    # 加载 cookie 并启动浏览器
+    try:
+        cookies = json.loads(COOKIE_FILE.read_text(encoding="utf-8")).get("cookies", [])
+    except Exception:
+        return {"found": 0, "checked": 0, "total": 0, "error": "Cookie 文件损坏"}
+
+    from playwright.async_api import async_playwright
+    found = 0
+    checked = 0
+    total = len(_to_check)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=headless,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+            ],
+        )
+        context = await browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            user_agent=DESKTOP_UA,
+            locale="zh-CN",
+        )
+        await context.add_cookies(cookies)
+        await context.add_init_script(ANTI_DETECT_SCRIPT)
+
+        page = await context.new_page()
+
+        for _poster, _item_url in _to_check:
+            checked += 1
+            try:
+                # Step 1: 打开帖子，找到 profile 链接
+                await page.goto(_item_url, wait_until="domcontentloaded", timeout=20000)
+                await page.wait_for_timeout(3000)
+
+                _profile_url = await page.evaluate("""() => {
+                    const links = document.querySelectorAll('a[href*="/personal?userId="]');
+                    return links.length > 0 ? links[0].href : '';
+                }""")
+
+                if not _profile_url:
+                    continue
+
+                # Step 2: 进卖家主页
+                await page.goto(_profile_url, wait_until="domcontentloaded", timeout=15000)
+                await page.wait_for_timeout(3000)
+
+                # Step 3: 数出租房（用 textContent 关键词匹配，排除普通商品）
+                _rental_count = await page.evaluate("""() => {
+                    const links = document.querySelectorAll('a[href*="/item?id="]');
+                    const seen = new Set();
+                    const rentalKW = /\\/月|出租|租房|整租|合租|转租|单间|一室|两室|三室|1室|2室|3室|一居|两居|三居|㎡|平方|无中介|拎包|房东|民水|民电/;
+                    let count = 0;
+                    for (const a of links) {
+                        const id = a.href.split('id=')[1]?.split('&')[0];
+                        if (!id || seen.has(id)) continue;
+                        seen.add(id);
+                        if (rentalKW.test(a.textContent || '')) count++;
+                    }
+                    return count;
+                }""")
+
+                if _rental_count >= 3:
+                    found += 1
+                    logger.info(
+                        f"Poster check [{_poster}]: 主页有 {_rental_count} 套出租房 → 中介"
+                    )
+                    _conn2 = _get_conn()
+                    try:
+                        _conn2.execute(
+                            "UPDATE listings SET landlord_type='中介' WHERE poster_id=? AND landlord_type!='中介'",
+                            (_poster,),
+                        )
+                        _conn2.commit()
+                    finally:
+                        _conn2.close()
+
+                # 随机延迟，减轻反爬压力
+                await page.wait_for_timeout(random.randint(1000, 3000))
+            except Exception:
+                continue
+
+        await page.close()
+        await browser.close()
+
+    return {"found": found, "checked": checked, "total": total, "error": None}
 
 
 async def _enrich_via_new_tabs(items: list[dict], context, max_concurrent: int = 5):

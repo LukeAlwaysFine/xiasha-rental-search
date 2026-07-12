@@ -39,11 +39,8 @@ def _parse_llm_concurrency(default: int = 40) -> int:
 
 
 from src.crawler.xianyu_async import crawl_xianyu_async
-from src.extractor.llm_extract import extract_listing
 from src.db.schema import get_conn, upsert_listing, count_listings
-from src.detector.agent_detector import detect_with_llm, is_sublet_from_content
-from src.geocode.amap import geocode
-from src.pipeline import _is_valid_rental, process_listing_item
+from src.pipeline import process_listing_item
 
 # 22 个关键词：区域 × 类型 交叉覆盖
 BULK_KEYWORDS = [

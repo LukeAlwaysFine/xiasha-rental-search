@@ -109,110 +109,113 @@ async def llm_reevaluate_all(
 
     t0 = time.time()
     conn = get_conn()
+    try:
+        # 查询所有房源
+        if sample > 0:
+            rows = conn.execute(
+                "SELECT id, title, poster_id, contact, landlord_type FROM listings "
+                "WHERE title IS NOT NULL AND title != '' "
+                "ORDER BY RANDOM() LIMIT ?",
+                (sample,),
+            ).fetchall()
+        elif limit > 0:
+            rows = conn.execute(
+                "SELECT id, title, poster_id, contact, landlord_type FROM listings "
+                "WHERE title IS NOT NULL AND title != '' "
+                "ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, title, poster_id, contact, landlord_type FROM listings "
+                "WHERE title IS NOT NULL AND title != ''"
+            ).fetchall()
 
-    # 查询所有房源
-    if sample > 0:
-        rows = conn.execute(
-            "SELECT id, title, poster_id, contact, landlord_type FROM listings "
-            "WHERE title IS NOT NULL AND title != '' "
-            "ORDER BY RANDOM() LIMIT ?",
-            (sample,),
-        ).fetchall()
-    elif limit > 0:
-        rows = conn.execute(
-            "SELECT id, title, poster_id, contact, landlord_type FROM listings "
-            "WHERE title IS NOT NULL AND title != '' "
-            "ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT id, title, poster_id, contact, landlord_type FROM listings "
-            "WHERE title IS NOT NULL AND title != ''"
-        ).fetchall()
+        total = len(rows)
+        if total == 0:
+            logger.warning("No listings with content_text found")
+            return {"total": 0, "checked": 0, "changed": 0, "errors": 0, "duration_s": 0}
 
-    total = len(rows)
-    if total == 0:
-        conn.close()
-        logger.warning("No listings with content_text found")
-        return {"total": 0, "checked": 0, "changed": 0, "errors": 0, "duration_s": 0}
+        logger.info(f"LLM reevaluate: {total} listings to check...")
 
-    logger.info(f"LLM reevaluate: {total} listings to check...")
+        # 中介检测用较低并发——DeepSeek 免费版容易限流
+        try:
+            concurrency = min(int(os.getenv("LLM_CONCURRENCY", "40")), 10)
+        except (ValueError, TypeError):
+            concurrency = 10
+        sem = asyncio.Semaphore(concurrency)
+        checked = [0]
+        changed = [0]
+        errors = [0]
 
-    # 中介检测用较低并发——DeepSeek 免费版容易限流
-    sem = asyncio.Semaphore(min(int(os.getenv("LLM_CONCURRENCY", "40")), 10))
-    checked = [0]
-    changed = [0]
-    errors = [0]
+        async def _check_one(row):
+            listing_id, title, poster_id, contact, old_type = row
+            async with sem:
+                try:
+                    llm_result = await llm_check_agent(title or "")
+                except Exception as e:
+                    errors[0] += 1
+                    if errors[0] <= 3:  # 只打印前几个错误
+                        logger.warning(f"Check #{listing_id} error: {type(e).__name__}: {e}")
+                    return
+                if llm_result is None:
+                    errors[0] += 1
+                    return
 
-    async def _check_one(row):
-        listing_id, title, poster_id, contact, old_type = row
-        async with sem:
-            try:
-                llm_result = await llm_check_agent(title or "")
-            except Exception as e:
-                errors[0] += 1
-                if errors[0] <= 3:  # 只打印前几个错误
-                    logger.warning(f"Check #{listing_id} error: {type(e).__name__}: {e}")
-                return
-            if llm_result is None:
-                errors[0] += 1
-                return
-
-            # 混合判定
-            new_type, hits, meta = detect_with_llm(
-                content=title or "",
-                poster_id=poster_id or "",
-                contact=contact,
-                conn=conn,
-                llm_agent_signals=llm_result.get("agent_signals", []),
-                llm_agent_confidence=llm_result.get("agent_confidence", ""),
-                llm_agent_reasoning=llm_result.get("agent_reasoning", ""),
-            )
-
-            checked[0] += 1
-            if new_type != old_type:
-                changed[0] += 1
-                reason = llm_result.get("agent_reasoning", "")[:60]
-                old_label = old_type or "未知"
-                logger.info(
-                    f"[{checked[0]}/{total}] #{listing_id} {old_label}→{new_type} | "
-                    f"score={meta['hybrid_score']} | {reason}"
+                # 混合判定
+                new_type, hits, meta = detect_with_llm(
+                    content=title or "",
+                    poster_id=poster_id or "",
+                    contact=contact,
+                    conn=conn,
+                    llm_agent_signals=llm_result.get("agent_signals", []),
+                    llm_agent_confidence=llm_result.get("agent_confidence", ""),
+                    llm_agent_reasoning=llm_result.get("agent_reasoning", ""),
                 )
-                if not dry_run:
-                    conn.execute(
-                        "UPDATE listings SET landlord_type=? WHERE id=?",
-                        (new_type, listing_id),
+
+                checked[0] += 1
+                if new_type != old_type:
+                    changed[0] += 1
+                    reason = llm_result.get("agent_reasoning", "")[:60]
+                    old_label = old_type or "未知"
+                    logger.info(
+                        f"[{checked[0]}/{total}] #{listing_id} {old_label}→{new_type} | "
+                        f"score={meta['hybrid_score']} | {reason}"
                     )
+                    if not dry_run:
+                        conn.execute(
+                            "UPDATE listings SET landlord_type=? WHERE id=?",
+                            (new_type, listing_id),
+                        )
 
-            if checked[0] % 50 == 0:
-                logger.info(f"  progress: {checked[0]}/{total} ({changed[0]} changed)")
-                if not dry_run:
-                    conn.commit()
+                if checked[0] % 50 == 0:
+                    logger.info(f"  progress: {checked[0]}/{total} ({changed[0]} changed)")
+                    if not dry_run:
+                        conn.commit()
 
-    await asyncio.gather(*[_check_one(r) for r in rows], return_exceptions=True)
+        await asyncio.gather(*[_check_one(r) for r in rows], return_exceptions=True)
 
-    if not dry_run:
-        conn.commit()
-        # 再做一次基于 DB 模式的批量修正（同 poster/同 contact）
-        re_result = reevaluate_all(conn)
-        if re_result["updated"] > 0:
-            logger.info(f"reevaluate_all 补充修正: {re_result['updated']} 条")
+        if not dry_run:
+            conn.commit()
+            # 再做一次基于 DB 模式的批量修正（同 poster/同 contact）
+            re_result = reevaluate_all(conn)
+            if re_result["updated"] > 0:
+                logger.info(f"reevaluate_all 补充修正: {re_result['updated']} 条")
 
-    conn.close()
-
-    stats = {
-        "total": total,
-        "checked": checked[0],
-        "changed": changed[0],
-        "errors": errors[0],
-        "duration_s": round(time.time() - t0, 1),
-    }
-    logger.info(
-        f"LLM reevaluate DONE: {checked[0]} checked, "
-        f"{changed[0]} changed, {errors[0]} errors, {stats['duration_s']}s"
-    )
-    return stats
+        stats = {
+            "total": total,
+            "checked": checked[0],
+            "changed": changed[0],
+            "errors": errors[0],
+            "duration_s": round(time.time() - t0, 1),
+        }
+        logger.info(
+            f"LLM reevaluate DONE: {checked[0]} checked, "
+            f"{changed[0]} changed, {errors[0]} errors, {stats['duration_s']}s"
+        )
+        return stats
+    finally:
+        conn.close()
 
 
 # ——— CLI ———

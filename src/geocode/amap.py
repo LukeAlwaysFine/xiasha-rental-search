@@ -138,41 +138,42 @@ async def batch_geocode_missing() -> int:
     last_call = [0.0]
     # 共享写入连接，批量积累后统一写入
     write_conn = get_conn()
+    try:
+        async def _geocode_addr(addr: str, ids: list[int]):
+            # 串行间隔：确保两次 geocode 调用之间至少间隔 300ms
+            async with delay_lock:
+                import time as _time
+                elapsed = _time.monotonic() - last_call[0]
+                if elapsed < 0.3:
+                    await asyncio.sleep(0.3 - elapsed)
+                last_call[0] = _time.monotonic()
+            async with sem:
+                for attempt in range(3):
+                    try:
+                        coords = await geocode(addr)
+                        if coords:
+                            async with write_lock:
+                                write_conn.executemany(
+                                    "UPDATE listings SET lng=?, lat=? WHERE id=?",
+                                    [(coords[0], coords[1], rid) for rid in ids],
+                                )
+                                write_conn.commit()
+                            async with lock:
+                                updated[0] += len(ids)
+                            return
+                        else:
+                            # geocode 返回 None（非限流，地址确实无法解析）
+                            break
+                    except Exception:
+                        if attempt < 2:
+                            await asyncio.sleep(1.5 * (attempt + 1))  # 指数退避
+                        else:
+                            async with lock:
+                                failed[0] += len(ids)
 
-    async def _geocode_addr(addr: str, ids: list[int]):
-        # 串行间隔：确保两次 geocode 调用之间至少间隔 300ms
-        async with delay_lock:
-            import time as _time
-            elapsed = _time.monotonic() - last_call[0]
-            if elapsed < 0.3:
-                await asyncio.sleep(0.3 - elapsed)
-            last_call[0] = _time.monotonic()
-        async with sem:
-            for attempt in range(3):
-                try:
-                    coords = await geocode(addr)
-                    if coords:
-                        async with write_lock:
-                            write_conn.executemany(
-                                "UPDATE listings SET lng=?, lat=? WHERE id=?",
-                                [(coords[0], coords[1], rid) for rid in ids],
-                            )
-                            write_conn.commit()
-                        async with lock:
-                            updated[0] += len(ids)
-                        return
-                    else:
-                        # geocode 返回 None（非限流，地址确实无法解析）
-                        break
-                except Exception:
-                    if attempt < 2:
-                        await asyncio.sleep(1.5 * (attempt + 1))  # 指数退避
-                    else:
-                        async with lock:
-                            failed[0] += len(ids)
-
-    await asyncio.gather(*[_geocode_addr(addr, ids) for addr, ids in addr_map.items()])
-    write_conn.close()
+        await asyncio.gather(*[_geocode_addr(addr, ids) for addr, ids in addr_map.items()])
+    finally:
+        write_conn.close()
     log.info(f"batch_geocode: {updated[0]} updated, {failed[0]} failed")
     return updated[0]
 
