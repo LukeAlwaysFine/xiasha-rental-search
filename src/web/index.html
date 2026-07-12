@@ -2239,6 +2239,7 @@ async function triggerManualFetch() {
   }
 
   _fetchRunning = true;
+  var _fetchStartTs = Date.now();
   var btn = document.getElementById('fetchBtn');
   var fb = document.getElementById('fetchProgressBar');
   var origText = btn ? btn.textContent : '';
@@ -2274,7 +2275,7 @@ async function triggerManualFetch() {
     if (_fetchPollId) { clearTimeout(_fetchPollId); _fetchPollId = null; }
     var fd = await fr.json();
     if (fr.ok && fd.new_count !== undefined) {
-      _setLastFetch(fd.new_count);
+      _setLastFetch(fd.new_count, '', (Date.now() - _fetchStartTs) / 1000);
       if (fb) { fb.innerHTML = '✅ 新增 ' + fd.new_count + ' 条房源 · 检查中介...'; }
       showToast('新增 ' + fd.new_count + ' 条房源', 'success');
       setTimeout(function() { search(true); }, 800);
@@ -2284,13 +2285,13 @@ async function triggerManualFetch() {
       }
     } else {
       var errMsg = fd.error || '抓取失败';
-      _setLastFetch(0, errMsg);
+      _setLastFetch(0, errMsg, (Date.now() - _fetchStartTs) / 1000);
       if (fb) { fb.innerHTML = '⚠️ ' + errMsg; }
       showToast(errMsg, 'error');
     }
   } catch(e) {
     if (_fetchPollId) { clearTimeout(_fetchPollId); _fetchPollId = null; }
-    _setLastFetch(0, '网络请求失败');
+    _setLastFetch(0, '网络请求失败', (Date.now() - _fetchStartTs) / 1000);
     if (fb) { fb.innerHTML = '⚠️ 请求失败，请检查网络'; }
     console.error('Manual fetch error:', e);
   }
@@ -2311,6 +2312,7 @@ async function triggerPosterCheck() {
     return;
   }
   _posterCheckRunning = true;
+  var _pcStartTs = Date.now();
   var btn = document.getElementById('posterCheckBtn');
   var fb = document.getElementById('fetchProgressBar');
   var origText = btn ? btn.textContent : '';
@@ -2349,19 +2351,19 @@ async function triggerPosterCheck() {
     if (_posterCheckPollId) { clearTimeout(_posterCheckPollId); _posterCheckPollId = null; }
     var pd = await pr.json();
     if (pr.ok && pd.found !== undefined) {
-      _setLastPosterCheck(pd.found, pd.checked);
+      _setLastPosterCheck(pd.found, pd.checked, '', (Date.now() - _pcStartTs) / 1000);
       if (fb) { fb.innerHTML = '✅ 检查完成 · 发现 ' + pd.found + ' 个中介 · 正在刷新...'; }
       showToast('发现 ' + pd.found + ' 个中介', 'success');
       setTimeout(function() { search(true); }, 800);
     } else {
       var errMsg = pd.error || '检测失败';
-      _setLastPosterCheck(0, 0, errMsg);
+      _setLastPosterCheck(0, 0, errMsg, (Date.now() - _pcStartTs) / 1000);
       if (fb) { fb.innerHTML = '⚠️ ' + errMsg; }
       showToast(errMsg, 'error');
     }
   } catch(e) {
     if (_posterCheckPollId) { clearTimeout(_posterCheckPollId); _posterCheckPollId = null; }
-    _setLastPosterCheck(0, 0, '网络请求失败');
+    _setLastPosterCheck(0, 0, '网络请求失败', (Date.now() - _pcStartTs) / 1000);
     if (fb) { fb.innerHTML = '⚠️ 请求失败，请检查网络'; }
     console.error('Poster check error:', e);
   }
@@ -2382,13 +2384,14 @@ function _checkOngoingPosterCheck() {
     .then(function(s) {
       var btn = document.getElementById('posterCheckBtn');
       // 已完成但本地无记录 → 补持久化
+      var _pcRecDuration = (s.finished_at && s.started_at) ? (s.finished_at - s.started_at) : 0;
       if (!s.running && s.finished_at) {
         _lastPosterCheckAt = s.finished_at;
         _updatePosterCheckLabel();
         if (!s.error) {
-          _setLastPosterCheck(s.found || 0, s.checked || 0);
+          _setLastPosterCheck(s.found || 0, s.checked || 0, '', _pcRecDuration);
         } else {
-          _setLastPosterCheck(0, 0, s.error);
+          _setLastPosterCheck(0, 0, s.error, _pcRecDuration);
         }
       }
       if (!s.running) return;
@@ -2410,11 +2413,12 @@ function _checkOngoingPosterCheck() {
               _setLastPosterCheck(s2.found || 0, s2.checked || 0);
               if (btn) { btn.textContent = '🔍 检查是否中介'; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
               if (fb) {
+                var _pcd2 = (s2.finished_at && s2.started_at) ? (s2.finished_at - s2.started_at) : 0;
                 if (s2.error) {
-                  _setLastPosterCheck(0, 0, s2.error || '检测失败');
+                  _setLastPosterCheck(0, 0, s2.error || '检测失败', _pcd2);
                   fb.innerHTML = '⚠️ ' + (s2.error || '检测失败');
                 } else {
-                  _setLastPosterCheck(s2.found || 0, s2.checked || 0);
+                  _setLastPosterCheck(s2.found || 0, s2.checked || 0, '', _pcd2);
                   fb.innerHTML = '✅ 检查完成 · 发现 ' + (s2.found || 0) + ' 个中介 · 正在刷新...';
                 }
               }
@@ -2463,21 +2467,23 @@ function _loadOpsStatus() {
 
 function _saveOpsStatus(s) { localStorage.setItem(OPS_KEY, JSON.stringify(s)); }
 
-function _setLastFetch(count, error) {
+function _setLastFetch(count, error, duration) {
   var s = _loadOpsStatus();
   s.lastFetchAt = Date.now();
   s.lastFetchCount = count || 0;
   s.lastFetchError = error || '';
+  s.lastFetchDuration = duration || 0;
   _saveOpsStatus(s);
   _updateOpsStatus();
 }
 
-function _setLastPosterCheck(found, checked, error) {
+function _setLastPosterCheck(found, checked, error, duration) {
   var s = _loadOpsStatus();
   s.lastPosterCheckAt = Date.now();
   s.lastPosterCheckFound = found || 0;
   s.lastPosterCheckChecked = checked || 0;
   s.lastPosterCheckError = error || '';
+  s.lastPosterCheckDuration = duration || 0;
   _saveOpsStatus(s);
   _updateOpsStatus();
   _lastPosterCheckAt = s.lastPosterCheckAt / 1000;
@@ -2506,6 +2512,9 @@ function _updateOpsStatus() {
     } else if (s.lastFetchCount > 0) {
       text += ' · 新增 ' + s.lastFetchCount + ' 条';
     }
+    if (s.lastFetchDuration > 0) {
+      text += ' · 耗时 ' + _secToStr(Math.round(s.lastFetchDuration));
+    }
     parts.push('<span class="' + cls + '">' + text + '</span>');
   }
   if (s.lastPosterCheckAt) {
@@ -2516,6 +2525,9 @@ function _updateOpsStatus() {
       text += ' · ' + escapeHtml(s.lastPosterCheckError);
     } else if (s.lastPosterCheckFound > 0) {
       text += ' · 发现 ' + s.lastPosterCheckFound + ' 个中介';
+    }
+    if (s.lastPosterCheckDuration > 0) {
+      text += ' · 耗时 ' + _secToStr(Math.round(s.lastPosterCheckDuration));
     }
     parts.push('<span class="' + cls + '">' + text + '</span>');
   }
@@ -2905,10 +2917,11 @@ function _checkOngoingFetch() {
     .then(function(r) { return r.json(); })
     .then(function(s) {
       // 已完成但本地无记录 → 补持久化
+      var _recDuration = (s.finished_at && s.started_at) ? (s.finished_at - s.started_at) : 0;
       if (!s.running && s.finished_at && !s.error && s.new_count >= 0) {
-        _setLastFetch(s.new_count);
+        _setLastFetch(s.new_count, '', _recDuration);
       } else if (!s.running && s.error) {
-        _setLastFetch(0, s.error);
+        _setLastFetch(0, s.error, _recDuration);
       }
       if (!s.running) return;
       // 抓取进行中 → 立即恢复 UI 状态
@@ -2934,11 +2947,12 @@ function _checkOngoingFetch() {
               _fetchRunning = false;
               if (btn) { btn.textContent = '🔄 抓取房源'; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
               if (fb) {
+                var _d2 = (s2.finished_at && s2.started_at) ? (s2.finished_at - s2.started_at) : 0;
                 if (s2.error) {
-                  _setLastFetch(0, s2.error || '抓取失败');
+                  _setLastFetch(0, s2.error || '抓取失败', _d2);
                   fb.innerHTML = '⚠️ ' + (s2.error || '抓取失败');
                 } else {
-                  _setLastFetch(s2.new_count || 0);
+                  _setLastFetch(s2.new_count || 0, '', _d2);
                   fb.innerHTML = '✅ 抓取完成 · 新增 ' + (s2.new_count || 0) + ' 条房源 · 正在刷新...';
                 }
               }
