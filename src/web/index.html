@@ -43,6 +43,47 @@
     --radius-lg: 16px;
     --transition: .2s cubic-bezier(.4,0,.2,1);
   }
+  /* ——— 暗色模式 ——— */
+  [data-theme="dark"] {
+    --primary: #0f0f1a;
+    --primary-light: #121f36;
+    --accent: #ff7b7b;
+    --accent-hover: #ff5252;
+    --green: #3be07d;
+    --green-bg: #1a3322;
+    --red: #ff6b6b;
+    --red-bg: #331a1a;
+    --blue: #5b65fa;
+    --blue-bg: #1a1a33;
+    --orange: #ffb733;
+    --orange-bg: #332a1a;
+    --bg: #121218;
+    --card: #1e1e28;
+    --text: #e4e6ea;
+    --text-secondary: #a0a4b0;
+    --text-muted: #5a5e6a;
+    --border: #2a2d3a;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,.3);
+    --shadow: 0 2px 8px rgba(0,0,0,.35);
+    --shadow-hover: 0 8px 24px rgba(0,0,0,.45);
+    --shadow-lg: 0 16px 48px rgba(0,0,0,.55);
+  }
+  /* 暗色模式下 Header 背景微调 */
+  [data-theme="dark"] .app-header { box-shadow: 0 4px 20px rgba(0,0,0,.35); }
+  [data-theme="dark"] .search-box input { background: rgba(255,255,255,.08); }
+  [data-theme="dark"] .search-box input:focus { background: rgba(255,255,255,.12); }
+  [data-theme="dark"] .filter-row input[type=number],
+  [data-theme="dark"] .filter-row select,
+  [data-theme="dark"] .commute-input { background: #1a1a24; color: var(--text); }
+  [data-theme="dark"] .chip { background: #1a1a24; }
+  [data-theme="dark"] .chip.active { background: var(--accent); color: #fff; }
+  [data-theme="dark"] .detail-panel { background: #16161f; }
+  [data-theme="dark"] .commute-dropdown { background: var(--card); }
+  [data-theme="dark"] .commute-dropdown .tip-item:hover,
+  [data-theme="dark"] .commute-dropdown .tip-item.active { background: #2a1515; }
+  [data-theme="dark"] .source-link { color: #fff; }
+  [data-theme="dark"] .listing-card:hover { border-color: #3a3d4a; }
+  [data-theme="dark"] .fav-btn { background: #2a2a34; border-color: #3a3d4a; }
   body {
     font-family: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
     background: var(--bg);
@@ -50,6 +91,9 @@
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
+  /* 无障碍 focus 环 */
+  :focus-visible { outline: 2.5px solid var(--accent); outline-offset: 2px; }
+  button:focus-visible, .chip:focus-visible, input:focus-visible, select:focus-visible { outline: 2.5px solid var(--accent); outline-offset: 2px; }
   /* taste: prefers-reduced-motion 支持 */
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
@@ -112,15 +156,16 @@
   }
   .filter-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 20px; cursor: pointer; user-select: none; font-size: 14px; font-weight: 600;
+    padding: 12px 20px; user-select: none; font-size: 14px; font-weight: 600;
     color: var(--text); border-bottom: 1px solid transparent; transition: all var(--transition);
   }
   .filter-header:hover { background: #fafbfc; }
   .filter-header .arrow { font-size: 12px; color: var(--text-muted); transition: transform var(--transition); }
   .filters.open .filter-header .arrow { transform: rotate(180deg); }
   .filters.open .filter-header { border-bottom-color: var(--border); }
-  .filter-body { padding: 0 20px; max-height: 0; overflow: hidden; transition: max-height .35s ease, padding .35s ease; }
-  .filters.open .filter-body { max-height: 600px; padding: 16px 20px; overflow: visible; }
+  .filter-body { padding: 0 20px; display: grid; grid-template-rows: 0fr; transition: grid-template-rows .35s ease, padding .35s ease; }
+  .filter-body > div { overflow: hidden; }
+  .filters.open .filter-body { grid-template-rows: 1fr; padding: 16px 20px; }
   .filter-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
   .filter-row:last-child { margin-bottom: 0; }
   .filter-row > label {
@@ -339,9 +384,9 @@
 .status-bar.fetching { animation: fetchPulse 1.5s ease-in-out infinite; color: var(--accent); }
 .status-bar { text-align: center; padding: 12px; color: var(--text-muted); font-size: 13px; display: none; }
   .empty-state { text-align: center; padding: 80px 20px; color: var(--text-muted); }
-  .empty-state .empty-icon { font-size: 56px; margin-bottom: 16px; opacity: .6; }
-  .empty-state p { font-size: 16px; margin-bottom: 6px; }
-  .empty-state small { font-size: 13px; color: var(--text-muted); }
+  .empty-state .empty-icon { font-size: 64px; margin-bottom: 16px; opacity: .7; }
+  .empty-state p { font-size: 18px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+  .empty-state small { font-size: 14px; color: var(--text-secondary); line-height: 1.6; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading-spinner { text-align: center; padding: 20px; display: none; }
   .loading-spinner .spinner {
@@ -350,6 +395,43 @@
   }
   .loading-spinner span { margin-left: 10px; color: var(--text-muted); font-size: 14px; }
 
+  /* ——— 骨架屏 ——— */
+  @keyframes skeletonShimmer { 0% { opacity: .4 } 50% { opacity: .8 } 100% { opacity: .4 } }
+  .skeleton-card {
+    background: var(--card); border-radius: var(--radius); overflow: hidden;
+    box-shadow: var(--shadow-sm); border: 1px solid var(--border);
+    padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    animation: cardEnter .35s ease both, skeletonShimmer 1.6s ease-in-out infinite;
+  }
+  .skeleton-card .sk-line {
+    height: 14px; background: var(--border); border-radius: 6px;
+  }
+  .skeleton-card .sk-line.short { width: 40% }
+  .skeleton-card .sk-line.medium { width: 65% }
+  .skeleton-card .sk-line.long { width: 85% }
+  .skeleton-card .sk-price { height: 24px; width: 28%; background: var(--border); border-radius: 6px; }
+  .skeleton-card .sk-meta {
+    display: flex; gap: 20px;
+  }
+  .skeleton-card .sk-meta .sk-line { flex: 1; max-width: 80px; }
+
+  /* ——— Toast ——— */
+  #toastContainer {
+    position: fixed; top: 20px; right: 20px; z-index: 5000;
+    display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto; padding: 12px 20px; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 600; color: #fff;
+    box-shadow: var(--shadow-lg); animation: toastIn .35s var(--transition) both;
+    max-width: 360px; display: flex; align-items: center; gap: 8px; line-height: 1.4;
+  }
+  .toast.success { background: #2ed573; }
+  .toast.error { background: #ff4757; }
+  .toast.info { background: var(--primary); }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(40px) } to { opacity: 1; transform: translateX(0) } }
+  @keyframes toastOut { from { opacity: 1; transform: translateX(0) } to { opacity: 0; transform: translateX(40px) } }
+
   /* ——— FAB ——— */
   .fab {
     position: fixed; bottom: 28px; right: 28px; width: 48px; height: 48px; border-radius: 24px;
@@ -357,6 +439,24 @@
     box-shadow: var(--shadow-lg); z-index: 200; display: none; transition: all var(--transition);
   }
   .fab:hover { transform: translateY(-2px); box-shadow: 0 20px 40px rgba(0,0,0,.2); }
+
+  /* ——— 移动端地图/列表切换 ——— */
+  .mobile-toggle-btn {
+    display: none; position: fixed; bottom: 88px; right: 28px;
+    width: 48px; height: 48px; border-radius: 24px;
+    background: var(--accent); color: #fff; border: none; font-size: 20px; cursor: pointer;
+    box-shadow: var(--shadow-lg); z-index: 199; transition: all var(--transition);
+  }
+  .mobile-toggle-btn:hover { transform: translateY(-2px); }
+  @media (max-width: 900px) {
+    .mobile-toggle-btn { display: block; }
+    .main-content.show-map .list-panel { display: none; }
+    .main-content.show-map .map-panel {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 500; border-radius: 0;
+    }
+    .main-content.show-map ~ .fab,
+    .main-content.show-map + .fab { display: none !important; }
+  }
 
   /* ——— "查看原帖" 按钮 ——— */
   .source-link {
@@ -414,6 +514,7 @@
 </style>
 </head>
 <body>
+<div id="toastContainer"></div>
 <header class="app-header">
   <div class="header-inner">
     <div class="header-top">
@@ -427,10 +528,11 @@
       <button class="header-fav-btn" id="headerFavBtn" onclick="toggleFavFilter()" title="查看收藏">
         ♥ 我的收藏 <span class="fav-count">0</span>
       </button>
+      <button class="header-fav-btn" id="themeToggle" onclick="toggleTheme()" title="切换暗色模式" style="width:42px;padding:10px;justify-content:center" aria-label="切换暗色模式">🌙</button>
     </div>
     <div class="search-box" style="margin-top:16px">
-      <input type="text" id="keyword" placeholder="搜索地段、小区、地铁站... 如：金沙湖 两居室" />
-      <button onclick="search()">🔍&ensp;搜索</button>
+      <input type="text" id="keyword" placeholder="搜索地段、小区、地铁站... 如：金沙湖 两居室" aria-label="搜索关键词" />
+      <button onclick="search()" aria-label="开始搜索">🔍&ensp;搜索</button>
     </div>
     <div class="hot-areas">
       <span class="hot-label">热门</span>
@@ -448,16 +550,18 @@
 <div class="container">
   <!-- 筛选 -->
   <div class="filters open" id="filterPanel" style="margin-top:20px">
-    <div class="filter-header" onclick="document.getElementById('filterPanel').classList.toggle('open')">
-      <span>🔍 筛选条件</span>
-      <span class="arrow">▼</span>
+    <div class="filter-header">
+      <span onclick="document.getElementById('filterPanel').classList.toggle('open');saveFilterState()" style="flex:1;cursor:pointer">🔍 筛选条件</span>
+      <button onclick="event.stopPropagation();clearFilters()" style="margin-right:8px;padding:4px 12px;border:1px solid var(--border);border-radius:14px;background:transparent;color:var(--text-secondary);font-size:12px;cursor:pointer;transition:all var(--transition)" onmouseenter="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)';this.style.color='var(--text-secondary)'">清除筛选</button>
+      <span class="arrow" onclick="document.getElementById('filterPanel').classList.toggle('open');saveFilterState()" style="cursor:pointer">▼</span>
     </div>
     <div class="filter-body">
+      <div>
       <div class="filter-row">
         <label>租金</label>
-        <input type="number" id="price_min" placeholder="最低" onchange="search(true)" />
+        <input type="number" id="price_min" placeholder="最低" onchange="_debouncedSearch(true)" />
         <span class="filter-sep">—</span>
-        <input type="number" id="price_max" placeholder="最高" onchange="search(true)" />
+        <input type="number" id="price_max" placeholder="最高" onchange="_debouncedSearch(true)" />
         <span style="color:var(--text-muted);font-size:13px">元/月</span>
 
         <label style="margin-left:20px">户型</label>
@@ -483,7 +587,7 @@
         <span class="chip" tabindex="0" role="button" data-group="source_platforms" onclick="toggleChip(this,'source_platforms')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">闲鱼</span>
 
         <label style="margin-left:20px">时间</label>
-        <select id="hours_ago" onchange="search(true)">
+        <select id="hours_ago" onchange="_debouncedSearch(true)">
           <option value="" selected>不限</option>
           <option value="24">24小时内</option>
           <option value="72">3天内</option>
@@ -509,6 +613,7 @@
         <span class="chip" tabindex="0" role="button" data-sort="distance" id="sortDistance" onclick="setSort('distance', this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">距离</span>
       </div>
     </div>
+    </div>
   </div>
 
   <div class="summary-bar" id="summaryBar"></div>
@@ -516,9 +621,9 @@
   <div class="main-content">
     <div class="list-panel">
       <div class="empty-state" id="emptyState">
-        <div class="empty-icon">🔍</div>
-        <p>输入关键词开始搜索</p>
-        <small>覆盖闲鱼、豆瓣等平台的下沙租房信息</small>
+        <div class="empty-icon">🏠</div>
+        <p>开始探索下沙好房源</p>
+        <small>输入关键词或点击热门区域开始搜索<br/>覆盖闲鱼、豆瓣等平台</small>
       </div>
       <div id="results" style="display:none"></div>
       <div class="status-bar" id="statusBar"></div>
@@ -577,11 +682,41 @@ function initMap() {
 }
 
 // ——— 筛选交互 ———
-function toggleChip(el, name) { el.classList.toggle('active'); search(true); }
+function toggleChip(el, name) { el.classList.toggle('active'); _debouncedSearch(true); }
+function clearFilters() {
+  // Reset all chips
+  document.querySelectorAll('.filter-row .chip.active').forEach(function(c) { c.classList.remove('active'); });
+  // Reset price inputs
+  document.getElementById('price_min').value = '';
+  document.getElementById('price_max').value = '';
+  // Reset hours select
+  document.getElementById('hours_ago').value = '';
+  // Reset commute
+  document.getElementById('commute_ref').value = '';
+  commuteCoords = null;
+  document.getElementById('commuteStatus').textContent = '';
+  if (referenceMarker) { try { referenceMarker.setMap(null); } catch(e) {} referenceMarker = null; }
+  _clearDistanceRings();
+  // Reset sort to comprehensive
+  var sortChips = document.querySelectorAll('.filter-row .chip[data-sort]');
+  sortChips.forEach(function(c) { c.classList.remove('active'); });
+  if (sortChips.length > 0) sortChips[0].classList.add('active');
+  showToast('筛选条件已清除', 'info');
+  search(true);
+}
+function saveFilterState() {
+  localStorage.setItem('filter_open', document.getElementById('filterPanel').classList.contains('open'));
+}
+function restoreFilterState() {
+  var wasOpen = localStorage.getItem('filter_open');
+  if (wasOpen === 'false') {
+    document.getElementById('filterPanel').classList.remove('open');
+  }
+}
 function setSort(val, el) {
   document.querySelectorAll('.filter-row .chip[data-sort]').forEach(function(c) { c.classList.remove('active'); });
   if (el) el.classList.add('active');
-  search(true);
+  _debouncedSearch(true);
 }
 function getActiveChips(name) {
   return Array.from(document.querySelectorAll('.filter-row .chip[data-group="' + name + '"]'))
@@ -764,7 +899,7 @@ async function search(reset) {
     console.error('Search error:', e);
     if (reset) {
       document.getElementById('emptyState').style.display = 'block';
-      document.getElementById('emptyState').innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><p>搜索失败</p><small>' + escapeHtml(e.message || '未知错误') + '</small></div>';
+      document.getElementById('emptyState').innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><p>搜索失败</p><small>' + escapeHtml(e.message || '未知错误') + '<br/>请检查网络连接后重试</small></div>';
       document.getElementById('results').style.display = 'none';
       document.getElementById('statusBar').style.display = 'none';
     } else {
@@ -783,7 +918,29 @@ async function loadMore() {
 }
 
 function showLoading(on) {
-  document.getElementById('loadingSpinner').style.display = on ? 'block' : 'none';
+  var spinner = document.getElementById('loadingSpinner');
+  var results = document.getElementById('results');
+  var empty = document.getElementById('emptyState');
+
+  if (on) {
+    // 隐藏空状态，显示骨架屏
+    if (empty) empty.style.display = 'none';
+    // 生成 3 个骨架卡片
+    var sk = '';
+    for (var i = 0; i < 3; i++) {
+      sk += '<div class="skeleton-card" style="animation-delay:' + (i * 0.1).toFixed(2) + 's">'
+        + '<div class="sk-price"></div>'
+        + '<div class="sk-line long"></div>'
+        + '<div class="sk-meta"><div class="sk-line"></div><div class="sk-line"></div><div class="sk-line"></div></div>'
+        + '<div class="sk-line medium"></div>'
+        + '</div>';
+    }
+    if (results) results.innerHTML = sk;
+    if (results) results.style.display = 'block';
+    if (spinner) spinner.style.display = 'none';
+  } else {
+    if (spinner) spinner.style.display = 'none';
+  }
 }
 
 function getSort() {
@@ -909,7 +1066,7 @@ function renderResults(data, reset) {
     html += '<div class="meta-row">';
     html += '<span class="contact-info">' + distStr + (l.contact ? '📞 ' + escapeHtml(l.contact) : '') + (l.publish_time ? ' · ' + timeAgo(l.publish_time) : '') + '</span>';
     html += '<span class="actions">';
-    html += '<button class="fav-btn ' + favClass + '" data-url="' + escapeAttr(l.source_url || '') + '" data-id="' + l.id + '" onclick="var u=this.getAttribute(\'data-url\');var i=parseInt(this.getAttribute(\'data-id\'));event.stopPropagation();toggleFav(u,i)" title="收藏">♥</button>';
+    html += '<button class="fav-btn ' + favClass + '" data-url="' + escapeAttr(l.source_url || '') + '" data-id="' + l.id + '" onclick="var u=this.getAttribute(\'data-url\');var i=parseInt(this.getAttribute(\'data-id\'));event.stopPropagation();toggleFav(u,i)" title="' + (favClass ? '取消收藏' : '收藏') + '" aria-label="' + (favClass ? '取消收藏' : '收藏') + '">♥</button>';
     html += '<a href="' + safeUrl(l.source_url) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="source-link">查看原帖 →</a>';
     html += '</span>';
     html += '</div>';
@@ -1456,7 +1613,39 @@ function setupInfiniteScroll() {
   sentinelObserver.observe(document.getElementById('loadMoreSentinel'));
 }
 
+// ——— Toast ———
+function showToast(message, type) {
+  type = type || 'info';
+  var container = document.getElementById('toastContainer');
+  var toast = document.createElement('div');
+  toast.className = 'toast ' + type;
+  var icons = { success: '✅', error: '❌', info: 'ℹ️' };
+  toast.innerHTML = '<span>' + (icons[type] || '') + '</span> ' + escapeHtml(message);
+  container.appendChild(toast);
+  // 3s 后移除
+  var t = setTimeout(function() {
+    toast.style.animation = 'toastOut .3s var(--transition) forwards';
+    setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 300);
+  }, 3000);
+  // 点击提前关闭
+  toast.addEventListener('click', function() {
+    clearTimeout(t);
+    toast.style.animation = 'toastOut .25s var(--transition) forwards';
+    setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 250);
+  });
+}
+
 // ——— 工具函数 ———
+function debounce(fn, delay) {
+  var timer = null;
+  return function() {
+    var context = this, args = arguments;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(function() { fn.apply(context, args); }, delay);
+  };
+}
+var _debouncedSearch = debounce(function(reset) { search(reset); }, 300);
+
 function escapeHtml(s) {
   var str = String(s || '');
   str = str.replace(/[\x00-\x1f\x7f]/g, '');  // 剥离控制字符，防止 null-byte 注入
@@ -1479,12 +1668,7 @@ function safeUrl(url) {
   return escapeAttr(String(url).trim().replace(/[\x00-\x1f\x7f]/g, ''));
 }
 
-var _statusTimeoutId = null;
-
 async function handleCardClick(id) {
-  // 清除上一次卡片点击的状态栏恢复定时器，防止竞态覆盖
-  if (_statusTimeoutId) { clearTimeout(_statusTimeoutId); _statusTimeoutId = null; }
-
   // C1: 切换卡片内 .detail-info 展开/折叠（原代码查找不存在的 detail-{id} panel）
   var card = document.getElementById('card-' + id);
   if (card) {
@@ -1506,9 +1690,7 @@ async function handleCardClick(id) {
   var address = card.getAttribute('data-address');
   if (!address || address.length < 3) return;
 
-  var statusBar = document.getElementById('statusBar');
-  var prevStatus = statusBar ? statusBar.innerHTML : '';
-  if (statusBar) { statusBar.innerHTML = '📍 定位中...'; statusBar.style.display = 'block'; }
+  showToast('正在定位...', 'info');
   try {
     var resp = await fetch('/api/geocode?address=' + encodeURIComponent(address));
     var geo = await resp.json();
@@ -1536,20 +1718,14 @@ async function handleCardClick(id) {
       markers.push(marker);
       markerMap[String(id)] = marker;
       highlightMarker(marker);
-      if (statusBar) statusBar.innerHTML = '✅ 已定位: ' + geo.address;
+      showToast('已定位: ' + geo.address, 'success');
     } else {
-      if (statusBar) statusBar.innerHTML = '⚠️ 该地址无法定位';
+      showToast('该地址无法定位', 'error');
     }
   } catch(e) {
     console.log('Geocode fallback failed for id=' + id + ': ' + e.message);
-    if (statusBar) statusBar.innerHTML = '⚠️ 定位失败，请稍后重试';
+    showToast('定位失败，请稍后重试', 'error');
   }
-  _statusTimeoutId = setTimeout(function() {
-    _statusTimeoutId = null;
-    if (statusBar && statusBar.innerHTML.indexOf('定位') >= 0) {
-      statusBar.innerHTML = prevStatus;
-    }
-  }, 3000);
 }
 
 // 卡片 hover → 标记高亮
@@ -1602,9 +1778,9 @@ document.addEventListener('click', function(e) {
 });
 
 function timeAgo(iso) {
-  if (!iso) return '<span class="time-fresh" style="color:#999">未知</span>';
+  if (!iso) return '<span class="time-fresh" style="color:#999">● 未知</span>';
   var ts = new Date(iso).getTime();
-  if (isNaN(ts)) return '<span class="time-fresh" style="color:#999">未知</span>';
+  if (isNaN(ts)) return '<span class="time-fresh" style="color:#999">● 未知</span>';
   var diff = Date.now() - ts;
   var mins = Math.floor(diff / 60000);
   var hrs = Math.floor(mins / 60);
@@ -1612,7 +1788,7 @@ function timeAgo(iso) {
   var color = hrs < 72 ? '#2ed573' : (days < 14 ? '#ffa502' : '#ff4757');
   var label = mins < 1 ? '刚刚' : (mins < 60 ? mins + '分钟前' : (hrs < 24 ? hrs + '小时前' : days + '天前'));
   var badge = days >= 14 ? ' <span style="color:#ff4757;font-size:11px">· 可能已租出</span>' : '';
-  return '<span class="time-fresh" style="color:' + color + '">' + label + '</span>' + badge;
+  return '<span class="time-fresh" style="color:' + color + '">● ' + label + '</span>' + badge;
 }
 
 // ——— 收藏 ———
@@ -1650,6 +1826,7 @@ async function toggleFav(url, id) {
     } else {
       await fetch('/api/favorites/' + id, { method: 'POST' });
     }
+    showToast(wasFav ? '已取消收藏' : '已加入收藏', 'success');
     updateFavCountBadge();
   } catch(e) {
     // API 失败回滚 UI
@@ -1866,10 +2043,65 @@ function setupFab() {
   window.addEventListener('scroll', function() {
     fab.style.display = window.scrollY > 500 ? 'block' : 'none';
   });
+
+  // 移动端地图/列表切换按钮
+  var mobileBtn = document.createElement('button');
+  mobileBtn.className = 'mobile-toggle-btn';
+  mobileBtn.innerHTML = '🗺️';
+  mobileBtn.title = '切换地图/列表';
+  mobileBtn.onclick = toggleMobileView;
+  document.body.appendChild(mobileBtn);
+}
+
+var _mobileShowingMap = false;
+function toggleMobileView() {
+  _mobileShowingMap = !_mobileShowingMap;
+  var mc = document.querySelector('.main-content');
+  var btn = document.querySelector('.mobile-toggle-btn');
+  if (_mobileShowingMap) {
+    mc.classList.add('show-map');
+    if (btn) btn.innerHTML = '📋';
+    // 触发地图 resize
+    setTimeout(function() { if (map) map.resize(); }, 350);
+  } else {
+    mc.classList.remove('show-map');
+    if (btn) btn.innerHTML = '🗺️';
+  }
+}
+
+// ——— 暗色模式 ———
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  var btn = document.getElementById('themeToggle');
+  if (btn) btn.innerHTML = theme === 'dark' ? '☀️' : '🌙';
+  localStorage.setItem('theme', theme);
+  // 高德地图暗色（如支持）
+  if (map) {
+    try { map.setMapStyle(theme === 'dark' ? 'amap://styles/dark' : 'amap://styles/light'); } catch(e) {}
+  }
+}
+function toggleTheme() {
+  var cur = document.documentElement.getAttribute('data-theme') || 'light';
+  applyTheme(cur === 'dark' ? 'light' : 'dark');
+}
+function initTheme() {
+  var saved = localStorage.getItem('theme');
+  if (saved) { applyTheme(saved); return; }
+  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    applyTheme('dark');
+  }
+  // 监听系统主题变化
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+      if (!localStorage.getItem('theme')) applyTheme(e.matches ? 'dark' : 'light');
+    });
+  }
 }
 
 // ——— 启动 ———
 window.onload = function() {
+  initTheme();
+  restoreFilterState();
   setupFab();
   initMap();
   setupCommuteAutocomplete();
