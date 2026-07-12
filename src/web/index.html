@@ -1,0 +1,1883 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>下沙租房 — 房源搜索聚合平台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;500;600;700;800&display=swap" rel="stylesheet">
+<script>
+  window._AMapSecurityConfig = {
+    securityJsCode: '{{AMAP_SECURITY_CODE}}'
+  };
+</script>
+<script src="https://webapi.amap.com/maps?v=2.0&key={{AMAP_JS_KEY}}"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --primary: #1a1a2e;
+    --primary-light: #16213e;
+    --accent: #ff6b6b;
+    --accent-hover: #ee5a5a;
+    --green: #2ed573;
+    --green-bg: #eafff0;
+    --red: #ff4757;
+    --red-bg: #fff0f0;
+    --blue: #3742fa;
+    --blue-bg: #f0f0ff;
+    --orange: #ffa502;
+    --orange-bg: #fff8ed;
+    --bg: #f0f2f5;
+    --card: #ffffff;
+    --text: #2d3436;
+    --text-secondary: #636e72;
+    --text-muted: #b2bec3;
+    --border: #e8ecf1;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,.06);
+    --shadow: 0 2px 8px rgba(0,0,0,.08);
+    --shadow-hover: 0 8px 24px rgba(0,0,0,.12);
+    --shadow-lg: 0 16px 48px rgba(0,0,0,.16);
+    --radius-sm: 8px;
+    --radius: 12px;
+    --radius-lg: 16px;
+    --transition: .2s cubic-bezier(.4,0,.2,1);
+  }
+  body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* taste: prefers-reduced-motion 支持 */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  }
+  .container { max-width: 1280px; margin: 0 auto; padding: 0 20px; }
+
+  /* ——— Header ——— */
+  .app-header {
+    background: var(--primary);  /* taste: 纯色，禁用渐变 hero */
+    padding: 28px 0 24px;
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    box-shadow: 0 4px 20px rgba(0,0,0,.15);
+  }
+  .header-inner { max-width: 1280px; margin: 0 auto; padding: 0 20px; }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  .header-top { display: flex; align-items: flex-start; justify-content: space-between; }
+  .header-fav-btn {
+    display: flex; align-items: center; gap: 6px; padding: 10px 18px;
+    background: rgba(255,255,255,.1); border: 1.5px solid rgba(255,255,255,.2);
+    border-radius: 24px; color: #fff; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: all var(--transition); white-space: nowrap;
+    backdrop-filter: blur(4px); user-select: none;
+  }
+  .header-fav-btn:hover { background: rgba(255,255,255,.2); border-color: rgba(255,255,255,.35); transform: translateY(-1px); }
+  .header-fav-btn.active { background: var(--accent); border-color: var(--accent); box-shadow: 0 4px 16px rgba(255,107,107,.4); }
+  .header-fav-btn .fav-count { background: rgba(255,255,255,.25); padding: 1px 8px; border-radius: 10px; font-size: 12px; min-width: 20px; text-align: center; }
+  .header-fav-btn.active .fav-count { background: rgba(255,255,255,.3); }
+  .brand-icon { width: 40px; height: 40px; background: rgba(255,255,255,.15); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; font-size: 22px; }
+  .brand h1 { font-size: 22px; font-weight: 700; color: #fff; letter-spacing: -.3px; }
+  .brand .subtitle { font-size: 12px; color: rgba(255,255,255,.55); margin-top: 2px; }
+  .search-box { display: flex; gap: 0; max-width: 680px; }
+  .search-box input {
+    flex: 1; padding: 14px 20px; border: 2px solid transparent; border-radius: 28px 0 0 28px;
+    font-size: 15px; outline: none; background: rgba(255,255,255,.12); color: #fff;
+    transition: all var(--transition); backdrop-filter: blur(4px);
+  }
+  .search-box input::placeholder { color: rgba(255,255,255,.45); }
+  .search-box input:focus { background: rgba(255,255,255,.2); border-color: rgba(255,255,255,.3); box-shadow: 0 0 0 4px rgba(255,255,255,.06); }
+  .search-box button {
+    padding: 14px 28px; background: var(--accent); color: #fff; border: none; border-radius: 0 28px 28px 0;
+    font-size: 15px; font-weight: 600; cursor: pointer; transition: all var(--transition);
+    white-space: nowrap; letter-spacing: .3px;
+  }
+  .search-box button:hover { background: var(--accent-hover); box-shadow: 0 4px 16px rgba(255,107,107,.35); }
+  .hot-areas { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+  .hot-label { font-size: 12px; color: rgba(255,255,255,.4); margin-right: 4px; white-space: nowrap; }
+  .hot-area-chip {
+    padding: 5px 14px; border: 1px solid rgba(255,255,255,.2); border-radius: 20px;
+    color: rgba(255,255,255,.75); font-size: 13px; cursor: pointer; background: rgba(255,255,255,.06);
+    transition: all var(--transition); white-space: nowrap;
+  }
+  .hot-area-chip:hover { background: rgba(255,255,255,.18); color: #fff; border-color: rgba(255,255,255,.4); }
+
+  /* ——— Filters ——— */
+  .filters {
+    background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow-sm);
+    margin-bottom: 16px; border: 1px solid var(--border);
+  }
+  .filter-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 20px; cursor: pointer; user-select: none; font-size: 14px; font-weight: 600;
+    color: var(--text); border-bottom: 1px solid transparent; transition: all var(--transition);
+  }
+  .filter-header:hover { background: #fafbfc; }
+  .filter-header .arrow { font-size: 12px; color: var(--text-muted); transition: transform var(--transition); }
+  .filters.open .filter-header .arrow { transform: rotate(180deg); }
+  .filters.open .filter-header { border-bottom-color: var(--border); }
+  .filter-body { padding: 0 20px; max-height: 0; overflow: hidden; transition: max-height .35s ease, padding .35s ease; }
+  .filters.open .filter-body { max-height: 600px; padding: 16px 20px; overflow: visible; }
+  .filter-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
+  .filter-row:last-child { margin-bottom: 0; }
+  .filter-row > label {
+    font-size: 13px; font-weight: 600; color: var(--text-secondary); white-space: nowrap;
+    min-width: 36px; text-transform: uppercase; letter-spacing: .5px; font-size: 11px;
+  }
+  .filter-row input[type=number] {
+    padding: 8px 12px; border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+    font-size: 13px; width: 88px; outline: none; transition: all var(--transition); background: #fafbfc;
+  }
+  .filter-row input[type=number]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,107,107,.1); }
+  .filter-row select {
+    padding: 8px 12px; border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+    font-size: 13px; outline: none; background: #fafbfc; cursor: pointer;
+  }
+  .chip {
+    display: inline-flex; align-items: center; padding: 7px 14px; border: 1.5px solid var(--border);
+    border-radius: 20px; font-size: 13px; cursor: pointer; user-select: none;
+    background: #fafbfc; color: var(--text-secondary); transition: all var(--transition);
+    font-weight: 500; white-space: nowrap;
+  }
+  .chip:hover { border-color: var(--text-muted); color: var(--text); }
+  .chip.active { background: var(--primary); color: #fff; border-color: var(--primary); box-shadow: 0 2px 8px rgba(26,26,46,.2); }
+  .filter-sep { color: var(--text-muted); margin: 0 2px; }
+
+  /* ——— Main Content ——— */
+  .main-content { display: flex; gap: 16px; margin-top: 16px; }
+  /* ——— 列表滚动条 ——— */
+  .list-panel { flex: 0.6; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  .list-panel::-webkit-scrollbar { width: 6px; }
+  .list-panel::-webkit-scrollbar-track { background: transparent; }
+  .list-panel::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 3px; }
+  .list-panel::-webkit-scrollbar-thumb:hover { background: #b0b5bd; }
+  .map-panel {
+    flex: 1.4; background: var(--card); border-radius: var(--radius); overflow: hidden;
+    position: sticky; top: 200px; height: calc(100vh - 216px);
+    box-shadow: var(--shadow); border: 1px solid var(--border);
+  }
+  .map-panel #map { width: 100%; height: 100%; }
+  .map-legend {
+    position: absolute; bottom: 12px; left: 12px; z-index: 150;
+    background: rgba(255,255,255,.94); border-radius: var(--radius-sm);
+    padding: 10px 14px; box-shadow: var(--shadow); border: 1px solid var(--border);
+    font-size: 12px; backdrop-filter: blur(8px); user-select: none;
+  }
+  .legend-title { font-weight: 700; color: var(--text); margin-bottom: 6px; font-size: 12px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; margin: 3px 0; color: var(--text-secondary); }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 1px 2px rgba(0,0,0,.2); border: 1px solid rgba(255,255,255,.8); }
+
+  /* ——— Summary Bar ——— */
+  .summary-bar {
+    background: var(--card); padding: 16px 20px; border-radius: var(--radius);
+    font-size: 13px; color: var(--text-secondary); display: none;
+    box-shadow: var(--shadow-sm); border: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+  .summary-bar .sb-header { display: flex; align-items: baseline; gap: 20px; flex-wrap: wrap; margin-bottom: 30px; }
+  .summary-bar .sb-header .sb-total { font-size: 15px; font-weight: 700; color: var(--text); }
+  .summary-bar .sb-header .sb-stat { font-size: 13px; }
+  .summary-bar .sb-header .sb-stat b { color: var(--text); font-weight: 600; }
+  .summary-bar .sb-header .sb-accent { color: var(--accent); font-weight: 700; }
+  .summary-bar .sb-dist { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  .summary-bar .sb-dist .sb-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 4px 10px; border-radius: 14px; background: var(--bg); white-space: nowrap; }
+  .summary-bar .sb-dist .sb-pill b { font-weight: 600; }
+  .summary-bar .sb-dist .sb-pill .sb-sub { font-size: 10px; opacity: .7; }
+  .sb-chart-body { align-self: flex-start; margin-top: 0; }
+  .price-histogram { display: flex; align-items: flex-end; gap: 6px; height: 80px; max-width: 560px; }
+  .price-histogram .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; min-width: 0; }
+  .price-histogram .bar { width: 100%; max-width: 60px; border-radius: 4px 4px 0 0; background: var(--accent); opacity: .85; min-height: 2px; }
+  .price-histogram .bar-label { font-size: 11px; color: var(--text-muted); margin-top: 3px; white-space: nowrap; }
+  .price-histogram .bar-count { font-size: 11px; color: var(--text); font-weight: 600; margin-bottom: 2px; flex-shrink: 0; }
+  .sb-x-label { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  /* ——— Listing Card ——— */
+  .listing-card {
+    background: var(--card); border-radius: var(--radius); overflow: hidden;
+    cursor: pointer; transition: all var(--transition);
+    box-shadow: var(--shadow-sm); border: 1px solid var(--border);
+    border-left: 4px solid transparent; position: relative;
+  }
+  .listing-card:hover {
+    transform: translateY(-2px); box-shadow: var(--shadow-hover);
+    border-color: #dde; border-left-width: 4px;
+  }
+  .listing-card.tag-personal { border-left-color: var(--green); }
+  .listing-card.tag-agent { border-left-color: var(--red); }
+  .listing-card.tag-unknown { border-left-color: var(--blue); }
+  .listing-card .card-body { display: flex; padding: 16px; gap: 14px; }
+  .listing-card .content-area { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .listing-card .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .listing-card .title {
+    font-size: 16px; font-weight: 600; color: var(--text); line-height: 1.4;
+    overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .listing-card .price {
+    font-size: 20px; font-weight: 800; color: var(--accent); white-space: nowrap;
+    flex-shrink: 0; letter-spacing: -.3px;
+  }
+  .listing-card .meta { font-size: 13px; color: var(--text-secondary); display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .listing-card .meta span { white-space: nowrap; }
+  .listing-card .meta-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .listing-card .contact-info { font-size: 13px; color: var(--text-secondary); }
+  .listing-card .actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+  .listing-card .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+  .tag {
+    display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 6px;
+    font-size: 12px; font-weight: 600; letter-spacing: .2px;
+  }
+  .tag-owner { background: var(--green-bg); color: #1b8c3c; }
+  .tag-agent { background: var(--red-bg); color: #d63031; }
+  .tag-sublet { background: var(--orange-bg); color: #c67e08; }
+  .tag-platform { background: #f0f0f5; color: var(--text-secondary); }
+  .tag-score { background: var(--blue-bg); color: #2e3ad6; }
+	  .tag-nomap { background: #fff3cd; color: #856404; font-size: 11px; cursor: help; }
+
+  /* ——— Detail Panel ——— */
+  .detail-panel {
+    background: #fafbfc; margin: 0 16px 16px; padding: 16px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); display: none; animation: slideDown .25s ease;
+  }
+  @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+  /* taste: 卡片交错入场 */
+  @keyframes cardEnter { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  .listing-card { animation: cardEnter .35s ease both; }
+  /* animation-delay 由 JS 动态设置 inline style，支持任意数量卡片交错入场 */
+  @media (prefers-reduced-motion: reduce) { .listing-card { animation: none; } }
+  .detail-panel.open { display: block; }
+  .detail-panel img { max-width: 100%; border-radius: 6px; margin: 4px; max-height: 200px; object-fit: cover; }
+  .detail-panel .detail-info { margin-top: 10px; font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
+
+  /* ——— Map Marker ——— */
+  .map-marker {
+    color: #fff; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 700;
+    white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,.25); border: 2px solid #fff;
+    cursor: pointer; transition: transform .15s, box-shadow .15s; letter-spacing: .2px;
+  }
+  .map-marker.highlight {
+    transform: scale(1.3); box-shadow: 0 0 16px currentColor; border-color: #ffe066;
+    z-index: 999; font-size: 12px; padding: 4px 10px;
+  }
+
+  /* ——— Autocomplete Dropdown ——— */
+  .commute-wrap { position: relative; }
+  .commute-dropdown {
+    position: absolute; top: 100%; left: 0; right: 0;
+    background: var(--card); border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgba(0,0,0,.12); border: 1px solid var(--border);
+    z-index: 2000; max-height: 340px; overflow-y: auto;
+    display: none; margin-top: 4px;
+  }
+  .commute-dropdown.show { display: block; }
+  .commute-dropdown .tip-item {
+    padding: 10px 14px; cursor: pointer;
+    border-bottom: 1px solid #f0f0f0; font-size: 13px;
+    transition: background var(--transition);
+  }
+  .commute-dropdown .tip-item:last-child { border-bottom: none; }
+  .commute-dropdown .tip-item:hover,
+  .commute-dropdown .tip-item.active {
+    background: #fff5f5; color: var(--accent);
+  }
+  .commute-dropdown .tip-item .tip-name { font-weight: 600; }
+  .commute-dropdown .tip-item .tip-district { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  /* ——— Cluster Marker (聚合标记) ——— */
+  .cluster-marker {
+    color: #fff;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    font-size: 14px;
+    font-weight: 800;
+    text-align: center;
+    line-height: 34px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.35);
+    border: 3px solid #fff;
+    cursor: pointer;
+    letter-spacing: .2px;
+    user-select: none;
+  }
+  .cluster-marker.highlight {
+    transform: scale(1.35);
+    box-shadow: 0 0 20px currentColor;
+    z-index: 999;
+    border-color: #ffe066;
+  }
+
+  /* ——— Reference Marker (通勤参考点) ——— */
+  .ref-marker {
+    background: #f0a500;
+    color: #fff;
+    padding: 5px 10px;
+    border-radius: 18px 18px 4px 18px;
+    font-size: 14px;
+    font-weight: 700;
+    white-space: nowrap;
+    box-shadow: 0 4px 16px rgba(240,165,0,.50);
+    border: 2.5px solid #fff;
+    cursor: default;
+    letter-spacing: .3px;
+    user-select: none;
+  }
+
+  /* ——— Fav Button ——— */
+  .fav-btn {
+    cursor: pointer; font-size: 22px; user-select: none; color: #ccc;
+    background: #f5f5f5; border: 2px solid #e8e8e8; border-radius: 50%;
+    width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center;
+    padding: 0; transition: all var(--transition); line-height: 1;
+  }
+  .fav-btn:hover { color: var(--accent); background: #fff0f0; border-color: var(--accent); transform: scale(1.12); box-shadow: 0 2px 8px rgba(255,107,107,.25); }
+  .fav-btn.active { color: #fff; background: var(--accent); border-color: var(--accent); box-shadow: 0 2px 10px rgba(255,107,107,.35); }
+  .fav-btn.active:hover { background: var(--accent-hover); }
+
+  /* ——— Status & Loading ——— */
+  @keyframes fetchPulse { 0%,100% { opacity:1 } 50% { opacity:.6 } }
+.status-bar.fetching { animation: fetchPulse 1.5s ease-in-out infinite; color: var(--accent); }
+.status-bar { text-align: center; padding: 12px; color: var(--text-muted); font-size: 13px; display: none; }
+  .empty-state { text-align: center; padding: 80px 20px; color: var(--text-muted); }
+  .empty-state .empty-icon { font-size: 56px; margin-bottom: 16px; opacity: .6; }
+  .empty-state p { font-size: 16px; margin-bottom: 6px; }
+  .empty-state small { font-size: 13px; color: var(--text-muted); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-spinner { text-align: center; padding: 20px; display: none; }
+  .loading-spinner .spinner {
+    display: inline-block; width: 28px; height: 28px; border: 3px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite;
+  }
+  .loading-spinner span { margin-left: 10px; color: var(--text-muted); font-size: 14px; }
+
+  /* ——— FAB ——— */
+  .fab {
+    position: fixed; bottom: 28px; right: 28px; width: 48px; height: 48px; border-radius: 24px;
+    background: var(--primary); color: #fff; border: none; font-size: 20px; cursor: pointer;
+    box-shadow: var(--shadow-lg); z-index: 200; display: none; transition: all var(--transition);
+  }
+  .fab:hover { transform: translateY(-2px); box-shadow: 0 20px 40px rgba(0,0,0,.2); }
+
+  /* ——— "查看原帖" 按钮 ——— */
+  .source-link {
+    font-size: 12px; color: #fff; text-decoration: none; font-weight: 600;
+    background: var(--blue); padding: 4px 12px; border-radius: 14px;
+    transition: all var(--transition); display: inline-flex; align-items: center; gap: 2px;
+    white-space: nowrap;
+  }
+  .source-link:hover { background: #2e3ad6; box-shadow: 0 2px 8px rgba(55,66,250,.3); transform: translateY(-1px); }
+  .source-link:active { transform: scale(.97); }
+
+  /* ——— Time freshness ——— */
+  .time-fresh { font-weight: 600; }
+  .time-stale { color: var(--text-muted); }
+
+  /* ——— Address ——— */
+  .commute-input {
+    padding: 8px 14px; border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+    font-size: 13px; width: 220px; outline: none; transition: all var(--transition); background: #fafbfc;
+    font-family: inherit;
+  }
+  .commute-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,107,107,.1); }
+  .commute-btn {
+    padding: 8px 16px; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm);
+    font-size: 13px; cursor: pointer; font-weight: 600; transition: all var(--transition);
+    white-space: nowrap; letter-spacing: .2px;
+  }
+  .commute-btn:hover { background: var(--accent-hover); box-shadow: 0 4px 12px rgba(255,107,107,.25); }
+
+  /* ——— Responsive ——— */
+  @media (max-width: 900px) {
+    .main-content { flex-direction: column; }
+    .map-panel { width: 100%; height: 45vh; min-height: 300px; position: static; top: auto; }
+    .search-box { max-width: 100%; }
+    .listing-card .card-body { padding: 12px; gap: 10px; }
+    .listing-card .title { font-size: 14px; }
+    .listing-card .price { font-size: 17px; }
+    .filter-row { gap: 6px; }
+    .filter-row input[type=number] { width: 68px; }
+    .chip { padding: 5px 10px; font-size: 12px; }
+    .header-fav-btn { padding: 5px 12px; font-size: 10px; }
+    .header-fav-btn .fav-count { padding: 0px 6px; font-size: 10px; }
+    .hot-areas { display: none; }
+    .fab { bottom: 16px; right: 16px; width: 42px; height: 42px; }
+    .map-legend { padding: 6px 10px; font-size: 11px; bottom: 8px; left: 8px; }
+    .app-header { padding: 18px 0 16px; }
+    .brand h1 { font-size: 18px; }
+  }
+  @media (max-width: 480px) {
+    .container, .header-inner { padding: 0 12px; }
+    .search-box input { padding: 12px 16px; font-size: 14px; }
+    .search-box button { padding: 12px 18px; font-size: 14px; }
+    .listing-card .card-body { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<header class="app-header">
+  <div class="header-inner">
+    <div class="header-top">
+      <div class="brand" style="margin-bottom:0">
+        <div class="brand-icon">🏠</div>
+        <div>
+          <h1>下沙租房</h1>
+          <div class="subtitle">杭州下沙 · 房源搜索聚合平台</div>
+        </div>
+      </div>
+      <button class="header-fav-btn" id="headerFavBtn" onclick="toggleFavFilter()" title="查看收藏">
+        ♥ 我的收藏 <span class="fav-count">0</span>
+      </button>
+    </div>
+    <div class="search-box" style="margin-top:16px">
+      <input type="text" id="keyword" placeholder="搜索地段、小区、地铁站... 如：金沙湖 两居室" />
+      <button onclick="search()">🔍&ensp;搜索</button>
+    </div>
+    <div class="hot-areas">
+      <span class="hot-label">热门</span>
+      <span class="hot-area-chip" onclick="quickSearch('下沙')">下沙</span>
+      <span class="hot-area-chip" onclick="quickSearch('金沙湖')">金沙湖</span>
+      <span class="hot-area-chip" onclick="quickSearch('高沙')">高沙</span>
+      <span class="hot-area-chip" onclick="quickSearch('文泽路')">文泽路</span>
+      <span class="hot-area-chip" onclick="quickSearch('下沙江滨')">下沙江滨</span>
+      <span class="hot-area-chip" onclick="quickSearch('未来科技城')">未来科技城</span>
+      <span class="hot-area-chip" onclick="quickSearch('滨江')">滨江</span>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+  <!-- 筛选 -->
+  <div class="filters open" id="filterPanel" style="margin-top:20px">
+    <div class="filter-header" onclick="document.getElementById('filterPanel').classList.toggle('open')">
+      <span>🔍 筛选条件</span>
+      <span class="arrow">▼</span>
+    </div>
+    <div class="filter-body">
+      <div class="filter-row">
+        <label>租金</label>
+        <input type="number" id="price_min" placeholder="最低" onchange="search(true)" />
+        <span class="filter-sep">—</span>
+        <input type="number" id="price_max" placeholder="最高" onchange="search(true)" />
+        <span style="color:var(--text-muted);font-size:13px">元/月</span>
+
+        <label style="margin-left:20px">户型</label>
+        <span class="chip" tabindex="0" role="button" data-group="house_types" onclick="toggleChip(this,'house_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">开间</span>
+        <span class="chip" tabindex="0" role="button" data-group="house_types" onclick="toggleChip(this,'house_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">一居</span>
+        <span class="chip" tabindex="0" role="button" data-group="house_types" onclick="toggleChip(this,'house_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">两居</span>
+        <span class="chip" tabindex="0" role="button" data-group="house_types" onclick="toggleChip(this,'house_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">三居</span>
+        <span class="chip" tabindex="0" role="button" data-group="house_types" onclick="toggleChip(this,'house_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">四居+</span>
+      </div>
+      <div class="filter-row">
+        <label>方式</label>
+        <span class="chip" tabindex="0" role="button" data-group="rent_types" onclick="toggleChip(this,'rent_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">整租</span>
+        <span class="chip" tabindex="0" role="button" data-group="rent_types" onclick="toggleChip(this,'rent_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">合租</span>
+        <span class="chip" tabindex="0" role="button" data-group="rent_types" onclick="toggleChip(this,'rent_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">单间</span>
+        <span class="chip" tabindex="0" role="button" data-group="rent_types" onclick="toggleChip(this,'rent_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">转租</span>
+
+        <label style="margin-left:20px">房东</label>
+        <span class="chip" tabindex="0" role="button" data-group="landlord_types" onclick="toggleChip(this,'landlord_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">个人</span>
+        <span class="chip" tabindex="0" role="button" data-group="landlord_types" onclick="toggleChip(this,'landlord_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">中介</span>
+
+        <label style="margin-left:20px">来源</label>
+        <span class="chip" tabindex="0" role="button" data-group="source_platforms" onclick="toggleChip(this,'source_platforms')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">豆瓣</span>
+        <span class="chip" tabindex="0" role="button" data-group="source_platforms" onclick="toggleChip(this,'source_platforms')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">闲鱼</span>
+
+        <label style="margin-left:20px">时间</label>
+        <select id="hours_ago" onchange="search(true)">
+          <option value="" selected>不限</option>
+          <option value="24">24小时内</option>
+          <option value="72">3天内</option>
+          <option value="168">7天内</option>
+          <option value="336">14天内</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <label>地址</label>
+        <span class="commute-wrap">
+          <input type="text" id="commute_ref" placeholder="输入地址，如：金沙湖地铁站..." class="commute-input" autocomplete="off" />
+          <div id="commuteDropdown" class="commute-dropdown"></div>
+        </span>
+        <button onclick="setCommuteRef()" class="commute-btn">按距离排</button>
+        <span id="commuteStatus" style="color:var(--text-muted);font-size:12px;margin-left:4px"></span>
+      </div>
+      <div class="filter-row">
+        <label>排序</label>
+        <span class="chip active" tabindex="0" role="button" data-sort="comprehensive" onclick="setSort('comprehensive', this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">综合</span>
+        <span class="chip" tabindex="0" role="button" data-sort="newest" onclick="setSort('newest', this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">最新</span>
+        <span class="chip" tabindex="0" role="button" data-sort="price_asc" onclick="setSort('price_asc', this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">价格↑</span>
+        <span class="chip" tabindex="0" role="button" data-sort="price_desc" onclick="setSort('price_desc', this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">价格↓</span>
+        <span class="chip" tabindex="0" role="button" data-sort="distance" id="sortDistance" onclick="setSort('distance', this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">距离</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="summary-bar" id="summaryBar"></div>
+  <!-- 主内容 -->
+  <div class="main-content">
+    <div class="list-panel">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">🔍</div>
+        <p>输入关键词开始搜索</p>
+        <small>覆盖闲鱼、豆瓣等平台的下沙租房信息</small>
+      </div>
+      <div id="results" style="display:none"></div>
+      <div class="status-bar" id="statusBar"></div>
+      <div class="loading-spinner" id="loadingSpinner">
+        <div class="spinner"></div>
+        <span>搜索中...</span>
+      </div>
+      <div id="loadMoreSentinel" style="height:1px"></div>
+    </div>
+    <div class="map-panel">
+        <div id="map"></div>
+        <div class="map-legend">
+          <div class="legend-title">图例</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#2ed573"></span> 个人房东</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#ff4757"></span> 中介</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#3742fa"></span> 未知</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#f0a500"></span> 地址参考点</div>
+        </div>
+      </div>
+  </div>
+</div>
+
+<script>
+// 状态
+const PAGE_SIZE = 50;
+let map, markers = [], markerMap = {}, activeInfoWin = null, activeBounceMarker = null, referenceMarker = null, distanceRings = [], distanceRingLabels = [];
+let searchState = { keyword: '', offset: 0, filters: {}, total: 0 };
+let isLoading = false;
+var DIST_COLORS = ['#ef4444','#f97316','#eab308','#10b981','#6366f1','#8b5cf6'];
+let favoritesOnly = false;
+let _favIds = [];  // 从服务端同步的收藏 ID 列表
+let _pollEnhanceId = null, _pollFetchId = null, _pollNewDataId = null, _lastKnownTotal = 0, _isFetching = false, _geocodeGen = 0;
+
+function initMap() {
+  if (typeof AMap === 'undefined') { console.error('AMap not loaded'); return; }
+  try {
+    map = new AMap.Map('map', { zoom: 15, center: [120.38, 30.31], resizeEnable: true });
+    // 比例尺（需异步加载插件）
+    try { AMap.plugin('AMap.Scale', function() { map.addControl(new AMap.Scale({ position: 'RB', offset: new AMap.Pixel(10, 10) })); }); } catch(e) {}
+    console.log('Map init OK');
+    // 瓦片加载诊断：Canvas=矢量瓦片(真实浏览器), img=栅格瓦片(headless回退)
+    setTimeout(function() {
+      var d = document.getElementById('map');
+      var tileLayers = d ? d.querySelectorAll('.amap-layer-tile') : [];
+      var tileImgs = d ? Array.from(d.querySelectorAll('img')).filter(function(i) { return /autonavi|appmaptile/.test(i.src); }) : [];
+      var canvases = d ? d.querySelectorAll('canvas') : [];
+      var hasTiles = tileImgs.length > 0 || canvases.length > 0 || tileLayers.length > 0;
+      console.log('Tile check: tileLayers=' + tileLayers.length + ' imgs=' + tileImgs.length + ' canvases=' + canvases.length + ' OK=' + hasTiles);
+      if (!hasTiles) {
+        console.warn('NO TILES FOUND - map not rendering (check CSP / security config)');
+      }
+    }, 5000);
+  } catch(e) {
+    console.error('Map init failed:', e);
+  }
+}
+
+// ——— 筛选交互 ———
+function toggleChip(el, name) { el.classList.toggle('active'); search(true); }
+function setSort(val, el) {
+  document.querySelectorAll('.filter-row .chip[data-sort]').forEach(function(c) { c.classList.remove('active'); });
+  if (el) el.classList.add('active');
+  search(true);
+}
+function getActiveChips(name) {
+  return Array.from(document.querySelectorAll('.filter-row .chip[data-group="' + name + '"]'))
+    .filter(function(c) { return c.classList.contains('active'); }).map(function(c) { return c.textContent; });
+}
+
+// ——— 搜索 ———
+async function search(reset) {
+  if (reset === undefined) reset = true;
+  if (isLoading) return;
+  isLoading = true;
+  showLoading(true);
+
+  if (reset) {
+    // 取消旧的轮询，防止竞态条件
+    if (_pollEnhanceId) { clearInterval(_pollEnhanceId); _pollEnhanceId = null; }
+    if (_pollFetchId) { clearInterval(_pollFetchId); _pollFetchId = null; _isFetching = false; }
+    var sbCls = document.getElementById('statusBar'); if (sbCls) sbCls.classList.remove('fetching');
+    _geocodeGen++;  // 使旧 geocode 循环失效
+    searchState = { keyword: document.getElementById('keyword').value.trim(), offset: 0,
+      price_min: document.getElementById('price_min').value,
+      price_max: document.getElementById('price_max').value,
+      house_types: getActiveChips('house_types'),
+      rent_types: getActiveChips('rent_types'),
+      landlord_types: getActiveChips('landlord_types'),
+      source_platforms: getActiveChips('source_platforms'),
+      hours_ago: document.getElementById('hours_ago').value,
+      sort: getSort(), total: 0,
+    };
+    clearMarkers();
+    var sb = document.getElementById('summaryBar');
+    if (sb) { sb.style.display = 'none'; }
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('results').style.display = 'none';
+    document.getElementById('results').innerHTML = '';
+  }
+
+  var st = searchState;
+  var params = new URLSearchParams();
+  if (st.keyword) params.set('keyword', st.keyword);
+  if (st.price_min) params.set('price_min', st.price_min);
+  if (st.price_max) params.set('price_max', st.price_max);
+  if (st.house_types.length) params.set('house_types', st.house_types.join(','));
+  if (st.rent_types.length) params.set('rent_types', st.rent_types.join(','));
+  if (st.landlord_types.length) params.set('landlord_types', st.landlord_types.join(','));
+  if (st.source_platforms.length) params.set('source_platforms', st.source_platforms.join(','));
+  if (st.hours_ago) params.set('hours_ago', st.hours_ago);
+  params.set('sort', st.sort);
+  if (commuteCoords) { params.set('ref_lng', commuteCoords.lng); params.set('ref_lat', commuteCoords.lat); }
+  if (favoritesOnly) params.set('favorites_only', 'true');
+  params.set('limit', PAGE_SIZE);
+  params.set('offset', st.offset);
+
+  try {
+    var resp = await fetch('/api/search?' + params.toString());
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    var data = await resp.json();
+    st.total = data.total; _lastKnownTotal = data.total;
+    st.offset += data.listings.length;
+    renderResults(data, reset);
+
+    if (reset && data.total > 0) {
+      try {
+        var mapParams = new URLSearchParams();
+        if (st.keyword) mapParams.set('keyword', st.keyword);
+        if (st.price_min) mapParams.set('price_min', st.price_min);
+        if (st.price_max) mapParams.set('price_max', st.price_max);
+        if (st.house_types.length) mapParams.set('house_types', st.house_types.join(','));
+        if (st.rent_types.length) mapParams.set('rent_types', st.rent_types.join(','));
+        if (st.landlord_types.length) mapParams.set('landlord_types', st.landlord_types.join(','));
+        if (st.source_platforms.length) mapParams.set('source_platforms', st.source_platforms.join(','));
+        if (st.hours_ago) mapParams.set('hours_ago', st.hours_ago);
+        if (favoritesOnly) mapParams.set('favorites_only', 'true');
+        if (commuteCoords) {
+          mapParams.set('ref_lng', commuteCoords.lng);
+          mapParams.set('ref_lat', commuteCoords.lat);
+        }
+        mapParams.set('sort', st.sort);
+        var mapLimit = Math.min(data.total, 1000);
+        mapParams.set('limit', mapLimit);
+        mapParams.set('offset', '0');
+        var mr = await fetch('/api/search?' + mapParams.toString());
+        var md = await mr.json();
+        var allPoints = [];
+        (md.listings || []).forEach(function(l) {
+          if (typeof l.lng === 'number' && typeof l.lat === 'number' && !isNaN(l.lng) && !isNaN(l.lat)) {
+            allPoints.push([l.lng, l.lat, (l.title || '').substring(0, 20), l.price || 0, l.id, l.landlord_type || '']);
+          }
+        });
+        if (allPoints.length > 0) {
+          renderMarkers(allPoints, true, true);  // fit to all visible markers（覆盖 renderResults 的初始渲染）
+        }
+        // 补齐无坐标卡片的标记（即使 allPoints 为空也要 geocode）
+        geocodeMissingMarkers();
+        // 参考标记纳入视野
+        updateReferenceMarker(true);
+      } catch(e) { /* allPoints fetch failed, geocode 仍会补齐 */ }
+    }
+
+    if (reset && data.enhance_key) {
+      var polls = 0;
+      _pollEnhanceId = setInterval(async function() {
+        polls++;
+        try {
+          var er = await fetch('/api/search/enhance?key=' + data.enhance_key);
+          var ed = await er.json();
+          if (ed.ready && ed.listings) {
+            clearInterval(_pollEnhanceId);
+            _pollEnhanceId = null;
+            st.offset = ed.listings.length;
+            var el2 = document.getElementById('results');
+            if (el2) el2.innerHTML = '';
+            renderResults({listings: ed.listings, total: st.total}, false);
+          }
+        } catch(e) { /* silent */ }
+        if (polls >= 8) { clearInterval(_pollEnhanceId); _pollEnhanceId = null; }
+      }, 500);
+    }
+
+    // 仅在无 LLM 增强且结果不足时启动后台补数据轮询（互斥）
+    // 收藏模式下不触发后台补数据
+    if (!favoritesOnly && reset && !data.enhance_key && data.listings && data.listings.length < 20) { _isFetching = true;
+      var polls2 = 0;
+      var sbFetch = document.getElementById('statusBar');
+      if (sbFetch) { sbFetch.innerHTML = '🔄 正在搜索更多房源...'; sbFetch.style.display = 'block'; sbFetch.classList.add('fetching'); }
+      _pollFetchId = setInterval(async function() {
+        polls2++;
+        try {
+          var fr = await fetch('/api/search?' + params.toString() + '&t=' + Date.now());
+          var fd = await fr.json();
+          if (fd.listings.length > st.offset) {
+            var newItems = fd.listings.slice(st.offset);
+            st.offset = fd.listings.length;
+            st.total = fd.total;
+            renderResults({listings: newItems, total: fd.total}, false);
+            var sb = document.getElementById('statusBar');
+            if (sb) sb.innerHTML = '🔄 已加载更多房源 · ' + st.offset + ' / ' + fd.total + ' 套';
+          }
+          if (fd.listings.length >= 20) {
+            clearInterval(_pollFetchId); _pollFetchId = null; _isFetching = false;
+            var sbDone2 = document.getElementById('statusBar'); if (sbDone2) sbDone2.classList.remove('fetching');
+            var sbDone = document.getElementById('statusBar');
+            if (sbDone && sbDone.innerHTML.indexOf('搜索更多') >= 0) { sbDone.innerHTML = '✅ 房源更新完成 · 共' + fd.total + '套'; }
+          }
+        } catch(e) { /* silent */ }
+        if (polls2 >= 10) {
+          clearInterval(_pollFetchId); _pollFetchId = null; _isFetching = false;
+          var sbTimeout2 = document.getElementById('statusBar'); if (sbTimeout2) sbTimeout2.classList.remove('fetching');
+          var sbTimeout = document.getElementById('statusBar');
+          if (sbTimeout && sbTimeout.innerHTML.indexOf('搜索更多') >= 0) { sbTimeout.innerHTML = '⏳ 后台搜索超时，请稍后刷新'; }
+        }
+      }, 3000);
+    }
+
+    // 30s 低频轮询：检测 scheduled fetch 是否有新数据入库
+    if (reset) {
+      if (_pollNewDataId) { clearInterval(_pollNewDataId); }
+      _pollNewDataId = setInterval(async function() {
+        try {
+          var nr = await fetch('/api/search?' + params.toString() + '&limit=1&t=' + Date.now());
+          var nd = await nr.json();
+          if (nd.total > _lastKnownTotal) {
+            _lastKnownTotal = nd.total;
+            if (!_pollFetchId) {  // 后台补数据轮询已结束 → 这是 scheduled fetch 的新数据
+              var sb = document.getElementById('statusBar');
+              if (sb) { sb.innerHTML = '🆕 有新房源，点击刷新 · 共' + nd.total + '套'; sb.style.display = 'block'; }
+            }
+          }
+        } catch(e) { /* silent */ }
+      }, 30000);
+    }
+
+    // ——— 距离统计（用 allPoints 200条，比主结果 50条更准）———
+    if (reset && commuteCoords && typeof md !== 'undefined' && md.listings) {
+      _updateDistanceStats(md.listings, commuteCoords);
+    } else if (reset && commuteCoords && data.listings) {
+      _updateDistanceStats(data.listings, commuteCoords);
+    }
+  } catch (e) {
+    console.error('Search error:', e);
+    if (reset) {
+      document.getElementById('emptyState').style.display = 'block';
+      document.getElementById('emptyState').innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><p>搜索失败</p><small>' + escapeHtml(e.message || '未知错误') + '</small></div>';
+      document.getElementById('results').style.display = 'none';
+      document.getElementById('statusBar').style.display = 'none';
+    } else {
+      // 非 reset（翻页）失败时显示短暂提示
+      var sb = document.getElementById('statusBar');
+      if (sb) { sb.innerHTML = '⚠️ 加载失败，请稍后重试'; sb.style.display = 'block'; }
+    }
+  } finally {
+    isLoading = false;
+    showLoading(false);
+  }
+}
+
+async function loadMore() {
+  await search(false);
+}
+
+function showLoading(on) {
+  document.getElementById('loadingSpinner').style.display = on ? 'block' : 'none';
+}
+
+function getSort() {
+  var s = document.querySelector('.filter-row:last-child .chip.active');
+  if (!s) return 'comprehensive';
+  var t = s.textContent.trim();
+  if (t === '综合') return 'comprehensive';
+  if (t === '最新') return 'newest';
+  if (t === '价格↑') return 'price_asc';
+  if (t === '价格↓') return 'price_desc';
+  if (t === '距离') return 'distance';
+  return 'comprehensive';
+}
+
+function renderResults(data, reset) {
+  var el = document.getElementById('results');
+  var statusBar = document.getElementById('statusBar');
+  var emptyState = document.getElementById('emptyState');
+
+  if (!data.listings || data.listings.length === 0) {
+    if (reset) {
+      el.style.display = 'none';
+      emptyState.style.display = 'block';
+      if (favoritesOnly) {
+        emptyState.innerHTML = '<div class="empty-state"><div class="empty-icon">💝</div><p>还没有收藏房源</p><small>点击房源卡片上的 ♥ 按钮即可收藏</small></div>';
+      } else {
+        emptyState.innerHTML = '<div class="empty-state"><div class="empty-icon">😕</div><p>没有找到匹配的房源</p><small>试试换个关键词，或去掉筛选条件</small></div>';
+      }
+      statusBar.style.display = 'none';
+      clearMarkers();
+    }
+    return;
+  }
+
+  emptyState.style.display = 'none';
+  el.style.display = 'block';
+
+  if (reset) {
+    el.innerHTML = '';
+    clearMarkers();
+    var summary = document.getElementById('summaryBar');
+    if (favoritesOnly) {
+      summary.innerHTML = '💝 我的收藏 · 共 <b>' + parseInt(data.total || 0) + '</b> 套房源';
+      summary.style.display = 'block';
+    } else {
+      var prices = data.listings.filter(function(l) { return l.price; }).map(function(l) { return l.price; });
+      if (prices.length > 0) {
+      var sorted = prices.slice().sort(function(a,b) { return a - b; });
+      var avg = Math.round(prices.reduce(function(a,b) { return a + b; }, 0) / prices.length);
+      var median = sorted[Math.floor(sorted.length / 2)];
+      var pmin = sorted[0], pmax = sorted[sorted.length - 1];
+      var bucketW = Math.ceil((pmax - pmin) / 7 / 100) * 100 || 100;
+      var buckets = [], i, bStart;
+      for (i = 0, bStart = Math.floor(pmin / 100) * 100; i < 7; i++, bStart += bucketW) {
+        buckets.push({ lo: bStart, hi: bStart + bucketW, count: 0 });
+      }
+      sorted.forEach(function(p) {
+        for (var j = 0; j < buckets.length; j++) {
+          if (p >= buckets[j].lo && p < buckets[j].hi) { buckets[j].count++; break; }
+          if (j === buckets.length - 1) buckets[j].count++; // 最大值落入最后一桶
+        }
+      });
+      var maxCount = Math.max.apply(null, buckets.map(function(b) { return b.count; })) || 1;
+      var barsHtml = '';
+      buckets.forEach(function(b) {
+        var h = Math.max(2, Math.round(b.count / maxCount * 60));
+        barsHtml += '<div class="bar-col"><div class="bar-count">' + (b.count ? b.count + '间' : '') + '</div><div class="bar" style="height:' + h + 'px"></div><div class="bar-label">' + (b.lo / 1000).toFixed(1) + 'k</div></div>';
+      });
+      var chartHtml = '<div class="sb-chart-body"><div class="price-histogram">' + barsHtml + '</div></div>' +
+        '<div class="sb-x-label">月租价格 →</div>';
+      var priceHtml = '<div class="sb-body">' +
+        '<div class="sb-header">' +
+          '<span class="sb-total">📊 ' + parseInt(data.total || 0) + ' 套房源</span>' +
+          '<span class="sb-stat">均价 <b class="sb-accent">¥' + parseInt(avg || 0) + '</b>/月</span>' +
+          '<span class="sb-stat">中位数 <b>¥' + parseInt(median || 0) + '</b>/月</span>' +
+        '</div>' +
+        chartHtml +
+        '</div>';
+      summary.innerHTML = priceHtml;
+      summary.style.display = 'block';
+    } else {
+      summary.style.display = 'none';
+    }
+    }
+  }
+
+  var html = '';
+  var geoPoints = [];
+
+  data.listings.forEach(function(l, i) {
+    var tags = [];
+    if (l._score && l._score >= 7) tags.push('<span class="tag tag-score" title="' + escapeHtml(l._reason||'') + '">⭐' + l._score + '分</span>');
+    if (l._merged_sources && l._merged_sources.length > 1) {
+      tags.push('<span class="tag tag-sublet">🔗' + l._merged_sources.join('+') + '</span>');
+    }
+    if (l.landlord_type === '个人') tags.push('<span class="tag tag-owner">个人</span>');
+    if (l.landlord_type === '中介') tags.push('<span class="tag tag-agent">中介</span>');
+    if (l.is_sublet) tags.push('<span class="tag tag-sublet">转租</span>');
+    tags.push('<span class="tag tag-platform">' + escapeHtml(l.source_platform || '') + '</span>');
+	    if (!l.lng || !l.lat) tags.push('<span class="tag tag-nomap" title="暂无坐标，仅列表展示">📍?</span>');
+
+
+    var favClass = isFav(l.source_url, l.id) ? 'active' : '';
+    var cardClass = 'listing-card tag-' + (l.landlord_type === '个人' ? 'personal' : (l.landlord_type === '中介' ? 'agent' : 'unknown'));
+
+    html += '<div class="' + cardClass + '" id="card-' + l.id + '" data-address="' + escapeAttr(l.address || '') + '" style="animation-delay:' + (i * 0.03).toFixed(2) + 's">';
+    html += '<div class="card-body">';
+    html += '<div class="content-area">';
+    html += '<div class="top">';
+    html += '<span class="title">' + escapeHtml(l.title || '无标题') + '</span>';
+    html += '<span class="price">' + (l.price ? '¥' + l.price + '<small style="font-size:13px;font-weight:500">/月</small>' : '价格面议') + '</span>';
+    html += '</div>';
+    html += '<div class="meta">';
+    html += '<span>' + (l.house_type || '') + '</span>';
+    html += '<span>' + (l.area ? l.area + '㎡' : '') + '</span>';
+    html += '<span>' + (l.rent_type || '') + '</span>';
+    html += '<span>' + (l.address || '') + '</span>';
+    html += '</div>';
+    var distStr = '';
+    if (commuteCoords && typeof l.distance === 'number' && !isNaN(l.distance)) {
+      distStr = ' 📍 ' + (l.distance >= 1000 ? (l.distance / 1000).toFixed(1) + 'km' : l.distance + 'm') + ' · ';
+    }
+    html += '<div class="meta-row">';
+    html += '<span class="contact-info">' + distStr + (l.contact ? '📞 ' + escapeHtml(l.contact) : '') + (l.publish_time ? ' · ' + timeAgo(l.publish_time) : '') + '</span>';
+    html += '<span class="actions">';
+    html += '<button class="fav-btn ' + favClass + '" data-url="' + escapeAttr(l.source_url || '') + '" data-id="' + l.id + '" onclick="var u=this.getAttribute(\'data-url\');var i=parseInt(this.getAttribute(\'data-id\'));event.stopPropagation();toggleFav(u,i)" title="收藏">♥</button>';
+    html += '<a href="' + safeUrl(l.source_url) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="source-link">查看原帖 →</a>';
+    html += '</span>';
+    html += '</div>';
+    html += '<div class="tags">' + tags.join('') + '</div>';
+    html += '</div>';
+    html += '</div>';
+    html += '<div class="detail-info">';
+    html += (l._reason ? '📌 ' + escapeHtml(l._reason) : '');
+    html += (l._merged_sources && l._merged_sources.length > 1 ? ' | 🔗 多平台: ' + l._merged_sources.join(', ') : '');
+    html += '</div>';
+    html += '</div>';
+    html += '</div>';
+
+    if (typeof l.lng === 'number' && typeof l.lat === 'number' && !isNaN(l.lng) && !isNaN(l.lat)) {
+      geoPoints.push([l.lng, l.lat, (l.title || '').substring(0, 60), l.price || 0, l.id, l.landlord_type || '']);
+    }
+  });
+
+  el.insertAdjacentHTML('beforeend', html);
+  // reset 时不在 renderResults 里 fitView，交给 search() 的 200-point map 加载统一处理
+  renderMarkers(geoPoints, reset, false);
+  updateReferenceMarker(false);  // add reference marker, don't re-fit
+  // reset=allPoints 接管 geocode，避免重复请求触发高德限流；非 reset（翻页）仍需补齐
+  if (!reset) geocodeMissingMarkers();
+
+  var showing = searchState.offset;
+  var total = data.total;
+  var noCoordCount = 0;
+  if (data.listings) {
+    for (var i = 0; i < data.listings.length; i++) {
+      if (!data.listings[i].lng || !data.listings[i].lat) noCoordCount++;
+    }
+  }
+  statusBar.style.display = 'block';
+  var countHtml = '';
+  if (total > showing) {
+    countHtml = '已显示 <b>' + showing + '</b> / <b>' + total + '</b> 套房源';
+  } else {
+    countHtml = '共 <b>' + total + '</b> 套房源';
+  }
+  if (noCoordCount > 0) {
+    countHtml += ' · <span style="color:#856404;cursor:help" title="部分房源地址无法解析为坐标，仅列表展示">📋 ' + noCoordCount + ' 套仅列表</span>';
+  }
+  statusBar.innerHTML = countHtml;
+}
+
+function _updateDistanceStats(listings, ref) {
+  if (!ref || !listings || !listings.length) return;
+  var b200 = 0, b500 = 0, b1 = 0, b2 = 0, b3 = 0, b5 = 0;
+  var g200 = {}, g500 = {}, g1 = {}, g2 = {}, g3 = {}, g5 = {};
+  var cosLat = Math.cos(ref.lat * Math.PI / 180);
+  var GRID = CLUSTER_GRID || 0.00015;
+  for (var i = 0; i < listings.length; i++) {
+    var l = listings[i];
+    if (typeof l.lng !== 'number' || typeof l.lat !== 'number') continue;
+    var dx = (l.lng - ref.lng) * 111320 * cosLat;
+    var dy = (l.lat - ref.lat) * 110540;
+    var m = Math.sqrt(dx*dx + dy*dy);
+    var key = (Math.round(l.lng / GRID) * GRID).toFixed(6) + ',' + (Math.round(l.lat / GRID) * GRID).toFixed(6);
+    if (m <= 200)  { b200++; g200[key] = true; }
+    if (m <= 500)  { b500++; g500[key] = true; }
+    if (m <= 1000) { b1++;   g1[key] = true; }
+    if (m <= 2000) { b2++;   g2[key] = true; }
+    if (m <= 3000) { b3++;   g3[key] = true; }
+    if (m <= 5000) { b5++;   g5[key] = true; }
+  }
+  var u200 = Object.keys(g200).length, u500 = Object.keys(g500).length;
+  var u1 = Object.keys(g1).length, u2 = Object.keys(g2).length;
+  var u3 = Object.keys(g3).length, u5 = Object.keys(g5).length;
+  if (b200 + b500 + b1 + b2 + b3 + b5 === 0) return;
+  var sb = document.getElementById('summaryBar');
+  if (!sb) return;
+  var labels = ['200m','500m','1km','2km','3km','5km'];
+  var counts = [b200, b500, b1, b2, b3, b5];
+  var places = [u200, u500, u1, u2, u3, u5];
+  var pills = '';
+  for (var i = 0; i < 6; i++) {
+    if (counts[i] === 0) continue;
+    pills += '<span class="sb-pill" style="border-left:3px solid ' + DIST_COLORS[i] + '">' +
+      '<b style="color:' + DIST_COLORS[i] + '">≤' + labels[i] + '</b> ' + counts[i] + ' 间' +
+      (places[i] !== counts[i] ? '<span class="sb-sub">（' + places[i] + ' 处）</span>' : '') +
+      '</span>';
+  }
+  var body = sb.querySelector('.sb-body');
+  if (!body) return;
+  var oldDist = body.querySelector('.sb-dist');
+  if (oldDist) oldDist.remove();
+  if (pills) body.insertAdjacentHTML('afterbegin', '<div class="sb-dist">' + pills + '</div>');
+}
+
+// ——— 标记聚合：同一位置多个房源 → 数字徽标 ———
+var CLUSTER_GRID = 0.00015;  // ~16m at latitude 30° (Hangzhou)
+
+function _clusterPoints(points) {
+  // 基于网格的聚类：把相近的点归入同一组
+  var groups = {};
+  var order = [];  // 保持组出现顺序
+  points.forEach(function(p) {
+    var lng = Number(p[0]), lat = Number(p[1]);
+    if (isNaN(lng) || isNaN(lat) || lng <= 0 || lat <= 0) return;
+    var key = (Math.round(lng / CLUSTER_GRID) * CLUSTER_GRID).toFixed(6) + ','
+            + (Math.round(lat / CLUSTER_GRID) * CLUSTER_GRID).toFixed(6);
+    if (!groups[key]) { groups[key] = []; order.push(key); }
+    groups[key].push(p);
+  });
+  return order.map(function(k) { return groups[k]; });
+}
+
+function _majorityColor(cluster) {
+  var personal = 0, agent = 0;
+  cluster.forEach(function(p) { var t = p[5] || ''; if (t === '个人') personal++; else if (t === '中介') agent++; });
+  if (agent > personal) return '#ff4757';
+  if (personal > agent) return '#2ed573';
+  return '#3742fa';  // 未知或持平
+}
+
+function _createClusterMarker(cluster) {
+  var count = cluster.length;
+  // 计算聚类中心
+  var sumLng = 0, sumLat = 0;
+  cluster.forEach(function(p) { sumLng += Number(p[0]); sumLat += Number(p[1]); });
+  var avgLng = sumLng / count, avgLat = sumLat / count;
+
+  var color = _majorityColor(cluster);
+  var content = '<div class="cluster-marker" style="background:' + color + '">' + count + '</div>';
+  var marker = new AMap.Marker({
+    position: new AMap.LngLat(avgLng, avgLat),
+    title: count + ' 套房源',
+    content: content,
+    offset: new AMap.Pixel(-17, -17),
+    zIndex: 100 + Math.min(count, 20),
+    extData: {
+      isCluster: true,
+      count: count,
+      color: color,
+      clusterIds: cluster.map(function(p) { return p[4]; }),
+      clusterData: cluster.map(function(p) { return { id: p[4], title: p[2], price: p[3], landlordType: p[5] || '' }; })
+    }
+  });
+  marker.on('click', function() { handleClusterClick(marker); });
+  return marker;
+}
+
+function _createSingleMarker(p) {
+  var lng = Number(p[0]), lat = Number(p[1]), title = p[2], price = p[3], listingId = p[4], landlordType = p[5] || '';
+  var pos = _offsetCoord(lng, lat, listingId);
+  var color = landlordType === '个人' ? '#2ed573' : (landlordType === '中介' ? '#ff4757' : '#3742fa');
+  var priceText = price ? '¥' + price : '';
+  var content = '<div class="map-marker" style="background:' + color + '">' + priceText + '</div>';
+  var marker = new AMap.Marker({
+    position: new AMap.LngLat(pos[0], pos[1]),
+    title: title,
+    content: content,
+    offset: new AMap.Pixel(-20, -12),
+    extData: { listingId: listingId, price: price, color: color, landlordType: landlordType, isCluster: false }
+  });
+  marker.on('click', function() { highlightMarker(marker); });
+  return marker;
+}
+
+function renderMarkers(points, clearFirst, fitView) {
+  if (clearFirst !== false) clearMarkers();
+  if (!map || points.length === 0) { console.log('renderMarkers: no map or no points'); return; }
+  try {
+    var clusters = _clusterPoints(points);
+    console.log('renderMarkers: ' + points.length + ' points → ' + clusters.length + ' groups');
+    clusters.forEach(function(cluster) {
+      var marker;
+      if (cluster.length >= 2) {
+        // 聚合标记：显示数字徽标
+        marker = _createClusterMarker(cluster);
+      } else {
+        // 单个标记：正常渲染
+        marker = _createSingleMarker(cluster[0]);
+      }
+      marker.setMap(map);
+      markers.push(marker);
+      // 注册到 markerMap（聚合标记关联所有成员 ID，单个标记关联自身）
+      cluster.forEach(function(p) {
+        var lid = p[4];
+        if (lid != null && document.getElementById('card-' + lid)) {
+          markerMap[String(lid)] = marker;
+        }
+      });
+    });
+    if (markers.length === 0) { console.log('renderMarkers: no valid markers'); return; }
+    if (fitView === true) {
+      if (markers.length > 1) {
+        map.setFitView(null, false, [60, 60, 60, 60]);
+      } else if (markers.length === 1 && points.length > 0) {
+        map.setCenter(new AMap.LngLat(points[0][0], points[0][1]));
+      }
+    }
+    console.log('renderMarkers: done, total markers=' + markers.length);
+  } catch (e) {
+    console.error('Map render error:', e);
+  }
+}
+
+// ——— 聚合标记点击：弹出列表 + 放大 ———
+function handleClusterClick(marker) {
+  var ext = marker.getExtData() || {};
+  var clusterData = ext.clusterData || [];
+  var count = ext.count || clusterData.length;
+  var color = ext.color || '#3742fa';
+
+  // 关闭旧 InfoWindow
+  if (activeInfoWin) { activeInfoWin.close(); activeInfoWin = null; }
+  // 重置上一个高亮标记
+  if (activeBounceMarker && activeBounceMarker !== marker) {
+    resetMarkerStyle(activeBounceMarker);
+    activeBounceMarker = null;
+  }
+
+  // 视觉高亮
+  marker.setContent('<div class="cluster-marker highlight" style="background:' + color + '">' + count + '</div>');
+  marker.setOffset(new AMap.Pixel(-23, -23));
+  activeBounceMarker = marker;
+  setTimeout(function() {
+    if (activeBounceMarker === marker) { resetMarkerStyle(marker); activeBounceMarker = null; }
+  }, 2500);
+
+  // 构建列表
+  var html = '<div style="max-height:240px;overflow-y:auto;font-size:13px;min-width:200px;padding:4px 0">';
+  html += '<b style="color:var(--accent);font-size:14px">📦 ' + count + ' 套房源</b>';
+  html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:4px">';
+  clusterData.forEach(function(item) {
+    var dotColor = item.landlordType === '个人' ? '#2ed573' : (item.landlordType === '中介' ? '#ff4757' : '#3742fa');
+    var title = (item.title || '').substring(0, 28);
+    html += '<div style="margin:5px 0;cursor:pointer;padding:3px 6px;border-radius:6px;transition:background .15s"';
+    html += ' onmouseenter="this.style.background=\'#fff5f5\'" onmouseleave="this.style.background=\'\'"';
+    html += ' onclick="var c=document.getElementById(\'card-' + item.id + '\');if(c){c.scrollIntoView({behavior:\'smooth\',block:\'center\'});c.style.boxShadow=\'0 0 0 3px ' + dotColor + '\';setTimeout(function(){c.style.boxShadow=\'\'},1500);}';
+    if (activeInfoWin) activeInfoWin.close();
+    html += '">';
+    html += '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + dotColor + ';margin-right:6px"></span>';
+    html += escapeHtml(title) + ' · <b>¥' + (item.price || '?') + '</b>';
+    html += '</div>';
+  });
+  html += '</div></div>';
+
+  activeInfoWin = new AMap.InfoWindow({
+    content: html,
+    offset: new AMap.Pixel(0, -45)
+  });
+  activeInfoWin.open(map, marker.getPosition());
+
+  // 放大以便区分
+  var curZoom = map.getZoom();
+  if (curZoom < 17) map.setZoomAndCenter(Math.min(curZoom + 3, 18), marker.getPosition());
+}
+
+// ——— 同坐标去重叠 ———
+var _coordMap = {};  // key="lng,lat" → count，跨 renderMarkers 和 geocodeMissingMarkers 共享
+
+function _offsetCoord(lng, lat, listingId) {
+  var key = lng.toFixed(6) + ',' + lat.toFixed(6);
+  var count = _coordMap[key] || 0;
+  _coordMap[key] = count + 1;
+  if (count === 0) return [lng, lat];
+  // 基于 listingId 或唯一计数值哈希分配偏移方向
+  // 即使无 listingId，每个同坐标标记也会因 count 递增而获得不同角度
+  var seed = listingId ? (listingId * 2654435761) : (count * 0x9E3779B9 + key.split('').reduce(function(a,c){return a+c.charCodeAt(0)},0));
+  var hash = seed & 0x7FFFFFFF;
+  var angle = ((hash * 2654435761) % 360) * Math.PI / 180;
+  var radius = 0.00003 * (1 + Math.floor(count / 8));  // >8个时向外扩散
+  return [lng + Math.cos(angle) * radius, lat + Math.sin(angle) * radius];
+}
+
+// ——— 后台补齐无坐标标记 ———
+async function geocodeMissingMarkers() {
+  var myGen = ++_geocodeGen;  // 捕获当前 generation
+  var cards = document.querySelectorAll('.listing-card');
+  var missing = [];
+  cards.forEach(function(card) {
+    var m = card.id.match(/^card-(\d+)$/);
+    if (!m) return;
+    if (markerMap[String(m[1])]) return;  // 已有标记，跳过
+    var addr = card.getAttribute('data-address');
+    if (addr && addr.length >= 3) missing.push({id: parseInt(m[1]), address: addr, card: card});
+  });
+  if (missing.length === 0) { return; }
+  console.log('geocodeMissingMarkers: processing ' + missing.length + ' cards...');
+
+  // 批量 geocode，每次 2 个并发，批次间隔 500ms 防止高德 API 限流
+  var batchSize = 2;
+  for (var i = 0; i < missing.length; i += batchSize) {
+    var batch = missing.slice(i, i + batchSize);
+    await Promise.all(batch.map(function(item) {
+      return fetch('/api/geocode?address=' + encodeURIComponent(item.address))
+        .then(function(r) { return r.json(); })
+        .then(function(geo) {
+          if (_geocodeGen !== myGen) return;  // 筛选已切换，丢弃旧批次结果
+          if (geo.lng && geo.lat && !markerMap[String(item.id)]) {
+            var titleEl = item.card.querySelector('.title');
+            var titleText = titleEl ? titleEl.textContent.trim() : '';
+            var priceEl = item.card.querySelector('.price');
+            var priceStr = priceEl ? priceEl.textContent.trim() : '';
+            var priceMatch = priceStr.match(/(\d+)/);
+            var price = priceMatch ? parseInt(priceMatch[1]) : 0;
+            var landlordType = '未知';
+            if (item.card.classList.contains('tag-personal')) landlordType = '个人';
+            else if (item.card.classList.contains('tag-agent')) landlordType = '中介';
+            var color = landlordType === '个人' ? '#2ed573' : (landlordType === '中介' ? '#ff4757' : '#3742fa');
+            var pos = _offsetCoord(geo.lng, geo.lat, item.id);
+            var marker = new AMap.Marker({
+              position: new AMap.LngLat(pos[0], pos[1]),
+              title: titleText,
+              content: '<div class="map-marker" style="background:' + color + '">' + (price ? '¥' + price : '') + '</div>',
+              offset: new AMap.Pixel(-20, -12),
+              extData: { listingId: item.id, price: price, color: color, landlordType: landlordType }
+            });
+            marker.on('click', function() { highlightMarker(marker); });
+            marker.setMap(map);
+            markers.push(marker);
+            if (document.getElementById('card-' + item.id)) {
+              markerMap[String(item.id)] = marker;
+            }
+          }
+        }).catch(function() { /* geocode 失败，静默跳过 */ });
+    }));
+    // 批次间延迟，防止高德 API 限流
+    if (_geocodeGen !== myGen) { console.log('geocodeMissingMarkers: aborted (gen changed)'); return; }
+    if (i + batchSize < missing.length) {
+      await new Promise(function(r) { setTimeout(r, 500); });
+    }
+  }
+  console.log('geocodeMissingMarkers: done, markers total=' + markers.length);
+}
+
+function clearMarkers() {
+  markers.forEach(function(m) { try { m.setMap(null); } catch(e) {} });
+  markers = [];
+  markerMap = {};
+  _coordMap = {};
+  if (activeInfoWin) { activeInfoWin.close(); activeInfoWin = null; }
+  if (activeBounceMarker) { activeBounceMarker = null; }
+  // _geocodeGen 已在 search(reset) 中递增，旧 geocode 循环检查 gen 自动中止
+  _clearDistanceRings();
+}
+
+function _clearDistanceRings() {
+  distanceRings.forEach(function(c) { try { c.setMap(null); } catch(e) {} });
+  distanceRings = [];
+  distanceRingLabels.forEach(function(t) { try { t.setMap(null); } catch(e) {} });
+  distanceRingLabels = [];
+}
+
+function updateReferenceMarker(fitView) {
+  // Remove existing reference marker (idempotent)
+  if (referenceMarker) {
+    try { referenceMarker.setMap(null); } catch(e) {}
+    referenceMarker = null;
+  }
+
+  // If no commute coords or no map, nothing to add
+  if (!commuteCoords || !map) return;
+
+  try {
+    var label = document.getElementById('commute_ref').value.trim() || '参考点';
+    var shortLabel = label.length > 6 ? label.substring(0, 6) + '…' : label;
+    referenceMarker = new AMap.Marker({
+      position: new AMap.LngLat(commuteCoords.lng, commuteCoords.lat),
+      title: '参考点: ' + label,
+      content: '<div class="ref-marker">📍' + shortLabel + '</div>',
+      offset: new AMap.Pixel(-24, -26),
+      zIndex: 110,
+      extData: { isReference: true }
+    });
+    referenceMarker.setMap(map);
+
+    // 距离圈：200m/500m/1km/2km/3km/5km 同心圆 + 文字标注
+    // 暖→冷渐变：越近越暖（紧迫），越远越冷（舒缓）
+    _clearDistanceRings();
+    var rings = [
+      {radius: 200,  fillOpacity: .12, strokeWeight: 2,   label: '200m', color: '#ef4444'},
+      {radius: 500,  fillOpacity: .10, strokeWeight: 2,   label: '500m', color: '#f97316'},
+      {radius: 1000, fillOpacity: .08, strokeWeight: 1.5, label: '1 km', color: '#eab308'},
+      {radius: 2000, fillOpacity: .05, strokeWeight: 1.5, label: '2 km', color: '#10b981'},
+      {radius: 3000, fillOpacity: .04, strokeWeight: 1,   label: '3 km', color: '#6366f1'},
+      {radius: 5000, fillOpacity: .02, strokeWeight: 1,   label: '5 km', color: '#8b5cf6'}
+    ];
+    var center = new AMap.LngLat(commuteCoords.lng, commuteCoords.lat);
+    var cosLat = Math.cos(commuteCoords.lat * Math.PI / 180);
+    rings.forEach(function(r) {
+      var circle = new AMap.Circle({
+        center: center,
+        radius: r.radius,
+        fillColor: r.color,
+        fillOpacity: r.fillOpacity,
+        strokeColor: r.color,
+        strokeWeight: r.strokeWeight,
+        strokeStyle: 'dashed',
+        zIndex: 50
+      });
+      circle.setMap(map);
+      distanceRings.push(circle);
+
+      // 文字标注：放在圈右下角（东南 45°），避开居中的参考标记
+      var angle = -45 * Math.PI / 180;  // 右下方向
+      var labelLng = commuteCoords.lng + (r.radius * 0.707 / (111320 * cosLat));
+      var labelLat = commuteCoords.lat - (r.radius * 0.707 / 110540);
+      var text = new AMap.Text({
+        position: new AMap.LngLat(labelLng, labelLat),
+        text: r.label,
+        style: {
+          'font-size': '11px',
+          'font-weight': '600',
+          'color': r.color,
+          'background': 'rgba(255,255,255,.85)',
+          'padding': '2px 6px',
+          'border-radius': '4px',
+          'border': '1px solid ' + r.color + '33',
+          'letter-spacing': '.2px'
+        },
+        offset: new AMap.Pixel(4, -8),
+        zIndex: 60
+      });
+      text.setMap(map);
+      distanceRingLabels.push(text);
+    });
+
+    // 以通勤点为圆心，zoom 14 ≈ 750m 视野半径
+    if (fitView !== false) {
+      map.setZoomAndCenter(14, new AMap.LngLat(commuteCoords.lng, commuteCoords.lat));
+    }
+  } catch(e) {
+    console.error('updateReferenceMarker failed:', e);
+  }
+}
+
+function highlightMarker(marker) {
+  var ext = marker.getExtData() || {};
+  // 聚合标记 → 委托给 handleClusterClick
+  if (ext.isCluster) { handleClusterClick(marker); return; }
+
+  if (activeBounceMarker && activeBounceMarker !== marker) {
+    resetMarkerStyle(activeBounceMarker);
+  }
+  if (activeInfoWin) activeInfoWin.close();
+  var color = ext.color || '#3742fa';
+  var price = ext.price;
+  var listingId = ext.listingId;
+  var newContent = '<div class="map-marker highlight" style="background:' + color + ';font-size:13px;padding:3px 10px">' + (price ? '📍¥' + price : '📍') + '</div>';
+  marker.setContent(newContent);
+  marker.setOffset(new AMap.Pixel(-28, -16));
+  activeBounceMarker = marker;
+  setTimeout(function() {
+    if (activeBounceMarker === marker) {
+      resetMarkerStyle(marker);
+      activeBounceMarker = null;
+    }
+  }, 2000);
+  activeInfoWin = new AMap.InfoWindow({
+    content: '<div style="padding:4px 8px;font-size:13px"><b>' + marker.getTitle() + '</b>' + (price ? '<br/>¥' + price + '/月' : '') + '</div>',
+    offset: new AMap.Pixel(0, -40)
+  });
+  activeInfoWin.open(map, marker.getPosition());
+  map.setZoomAndCenter(16, marker.getPosition());
+  // 滚动到对应卡片；如果不在当前列表中则动态拉取
+  if (listingId != null) {
+    var card = document.getElementById('card-' + listingId);
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.style.boxShadow = '0 0 0 3px ' + color;
+      setTimeout(function() { card.style.boxShadow = ''; }, 1500);
+    } else {
+      // 卡片不在当前 DOM — 从 API 拉取并动态插入
+      fetch('/api/listing/' + listingId)
+        .then(function(r) { return r.json(); })
+        .then(function(l) {
+          if (l.error) return;
+          var tags = [];
+          if (l.landlord_type === '个人') tags.push('<span class="tag tag-owner">个人</span>');
+          if (l.landlord_type === '中介') tags.push('<span class="tag tag-agent">中介</span>');
+          if (l.is_sublet) tags.push('<span class="tag tag-sublet">转租</span>');
+          tags.push('<span class="tag tag-platform">' + escapeHtml(l.source_platform || '') + '</span>');
+	    if (!l.lng || !l.lat) tags.push('<span class="tag tag-nomap" title="暂无坐标，仅列表展示">📍?</span>');
+          var cardClass = 'listing-card tag-' + (l.landlord_type === '个人' ? 'personal' : (l.landlord_type === '中介' ? 'agent' : 'unknown'));
+          var html = '<div class="' + cardClass + '" id="card-' + l.id + '" data-address="' + escapeAttr(l.address || '') + '" style="animation:none;border:2px solid ' + color + '">';
+          html += '<div class="card-body"><div class="content-area"><div class="top">';
+          html += '<span class="title">' + escapeHtml(l.title || '无标题') + '</span>';
+          html += '<span class="price">' + (l.price ? '¥' + l.price + '<small>/月</small>' : '价格面议') + '</span></div>';
+          html += '<div class="meta"><span>' + (l.house_type||'') + '</span><span>' + (l.area?l.area+'㎡':'') + '</span><span>' + (l.rent_type||'') + '</span><span>' + (l.address||'') + '</span></div>';
+          var distStr2 = '';
+          if (commuteCoords && typeof l.distance === 'number' && !isNaN(l.distance)) {
+            distStr2 = ' 📍 ' + (l.distance >= 1000 ? (l.distance / 1000).toFixed(1) + 'km' : l.distance + 'm') + ' · ';
+          }
+          html += '<div class="meta-row"><span class="contact-info">' + distStr2 + (l.contact?'📞 '+escapeHtml(l.contact):'') + (l.publish_time?' · '+timeAgo(l.publish_time):'') + '</span>';
+          html += '<a href="' + safeUrl(l.source_url) + '" target="_blank" rel="noopener" class="source-link">查看原帖 →</a></div>';
+          html += '<div class="tags">' + tags.join('') + '</div></div></div></div>';
+
+          var results = document.getElementById('results');
+          var temp = document.createElement('div');
+          temp.innerHTML = html;
+          var newCard = temp.firstChild;
+          results.insertBefore(newCard, results.firstChild);
+          var newMarker = new AMap.Marker({
+            position: marker.getPosition(),
+            title: marker.getTitle(),
+            map: map,
+            offset: new AMap.Pixel(-20, -12),
+            content: '<div class="map-marker" style="background:' + color + '">' + (price ? '¥' + price : '') + '</div>',
+            extData: { listingId: listingId, price: price, color: color, landlordType: l.landlord_type || '' }
+          });
+          newMarker.on('click', function() { highlightMarker(newMarker); });
+          markerMap[String(listingId)] = newMarker;
+          markers.push(newMarker);
+
+          setTimeout(function() {
+            newCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            newCard.style.boxShadow = '0 0 0 3px ' + color;
+            setTimeout(function() { newCard.style.boxShadow = ''; newCard.style.border = ''; }, 2000);
+          }, 150);
+        }).catch(function() { /* 静默失败 */ });
+    }
+  }
+}
+
+function resetMarkerStyle(marker) {
+  var ext = marker.getExtData() || {};
+  // 聚合标记：恢复为数字徽标
+  if (ext.isCluster) {
+    var color = ext.color || '#3742fa';
+    var count = ext.count || 1;
+    marker.setContent('<div class="cluster-marker" style="background:' + color + '">' + count + '</div>');
+    marker.setOffset(new AMap.Pixel(-17, -17));
+    return;
+  }
+  var color = ext.color || '#3742fa';
+  var priceText = ext.price ? '¥' + ext.price : '';
+  marker.setContent('<div class="map-marker" style="background:' + color + '">' + priceText + '</div>');
+  marker.setOffset(new AMap.Pixel(-20, -12));
+}
+
+// ——— 无限滚动 ———
+var sentinelObserver = null;
+function setupInfiniteScroll() {
+  if (sentinelObserver) sentinelObserver.disconnect();
+  sentinelObserver = new IntersectionObserver(function(entries) {
+    if (entries[0].isIntersecting && !isLoading && searchState.offset < searchState.total) {
+      loadMore();
+    }
+  }, { rootMargin: '200px' });
+  sentinelObserver.observe(document.getElementById('loadMoreSentinel'));
+}
+
+// ——— 工具函数 ———
+function escapeHtml(s) {
+  var str = String(s || '');
+  str = str.replace(/[\x00-\x1f\x7f]/g, '');  // 剥离控制字符，防止 null-byte 注入
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escapeAttr(s) {
+  // 用于 HTML 属性值（双引号），不用于 JS 字符串
+  var str = String(s || '');
+  // 移除控制字符（null-byte 等绕过防护）
+  str = str.replace(/[\x00-\x1f\x7f]/g, '');
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+}
+function safeUrl(url) {
+  if (!url) return '#';
+  var u = String(url).trim();
+  // 移除控制字符后检查协议（大小写不敏感）
+  u = u.replace(/[\x00-\x1f\x7f]/g, '').toLowerCase();
+  if (/^(javascript|data|vbscript):/i.test(u)) return '#';
+  // 对 HTTP(S) URL 使用 escapeAttr 做 HTML 属性安全转义
+  return escapeAttr(String(url).trim().replace(/[\x00-\x1f\x7f]/g, ''));
+}
+
+var _statusTimeoutId = null;
+
+async function handleCardClick(id) {
+  // 清除上一次卡片点击的状态栏恢复定时器，防止竞态覆盖
+  if (_statusTimeoutId) { clearTimeout(_statusTimeoutId); _statusTimeoutId = null; }
+
+  // C1: 切换卡片内 .detail-info 展开/折叠（原代码查找不存在的 detail-{id} panel）
+  var card = document.getElementById('card-' + id);
+  if (card) {
+    var detailInfo = card.querySelector('.detail-info');
+    if (detailInfo) {
+      document.querySelectorAll('.listing-card .detail-info.open').forEach(function(d) {
+        if (d !== detailInfo) d.classList.remove('open');
+      });
+      detailInfo.classList.toggle('open');
+    }
+  }
+
+  // 高亮地图标记
+  var marker = markerMap[String(id)];
+  if (marker) { highlightMarker(marker); return; }
+
+  // Geocode fallback：没有标记时尝试定位
+  if (!card) return;
+  var address = card.getAttribute('data-address');
+  if (!address || address.length < 3) return;
+
+  var statusBar = document.getElementById('statusBar');
+  var prevStatus = statusBar ? statusBar.innerHTML : '';
+  if (statusBar) { statusBar.innerHTML = '📍 定位中...'; statusBar.style.display = 'block'; }
+  try {
+    var resp = await fetch('/api/geocode?address=' + encodeURIComponent(address));
+    var geo = await resp.json();
+    if (geo.lng && geo.lat) {
+      var titleEl = card.querySelector('.title');
+      var titleText = titleEl ? titleEl.textContent.trim() : '';
+      var priceEl = card.querySelector('.price');
+      var priceStr = priceEl ? priceEl.textContent.trim() : '';
+      var priceMatch = priceStr.match(/(\d+)/);
+      var price = priceMatch ? parseInt(priceMatch[1]) : 0;
+      var landlordType = '未知';
+      if (card.classList.contains('tag-personal')) landlordType = '个人';
+      else if (card.classList.contains('tag-agent')) landlordType = '中介';
+      var color = landlordType === '个人' ? '#2ed573' : (landlordType === '中介' ? '#ff4757' : '#3742fa');
+      var offsetPos = _offsetCoord(geo.lng, geo.lat, id);
+      marker = new AMap.Marker({
+        position: new AMap.LngLat(offsetPos[0], offsetPos[1]),
+        title: titleText,
+        content: '<div class="map-marker" style="background:' + color + '">' + (price ? '¥' + price : '') + '</div>',
+        offset: new AMap.Pixel(-20, -12),
+        extData: { listingId: id, price: price, color: color, landlordType: landlordType }
+      });
+      marker.on('click', function() { highlightMarker(marker); });
+      marker.setMap(map);
+      markers.push(marker);
+      markerMap[String(id)] = marker;
+      highlightMarker(marker);
+      if (statusBar) statusBar.innerHTML = '✅ 已定位: ' + geo.address;
+    } else {
+      if (statusBar) statusBar.innerHTML = '⚠️ 该地址无法定位';
+    }
+  } catch(e) {
+    console.log('Geocode fallback failed for id=' + id + ': ' + e.message);
+    if (statusBar) statusBar.innerHTML = '⚠️ 定位失败，请稍后重试';
+  }
+  _statusTimeoutId = setTimeout(function() {
+    _statusTimeoutId = null;
+    if (statusBar && statusBar.innerHTML.indexOf('定位') >= 0) {
+      statusBar.innerHTML = prevStatus;
+    }
+  }, 3000);
+}
+
+// 卡片 hover → 标记高亮
+document.addEventListener('mouseenter', function(e) {
+  if (typeof e.target.closest !== 'function') return;
+  var card = e.target.closest('.listing-card');
+  if (!card) return;
+  var match = card.id.match(/^card-(\d+)$/);
+  if (!match) return;
+  var m = markerMap[String(match[1])];
+  if (m) {
+    try {
+      var ext = m.getExtData() || {};
+      if (ext.isCluster) {
+        // 聚合标记：脉冲效果，不改变内容
+        m.setOffset(new AMap.Pixel(-21, -21));
+        m._hovered = true;
+      } else {
+        var color = ext.color || '#3742fa';
+        var priceText = ext.price ? '¥' + ext.price : '';
+        m.setContent('<div class="map-marker highlight" style="background:' + color + ';font-size:12px;padding:2px 8px">' + priceText + '</div>');
+        m.setOffset(new AMap.Pixel(-24, -14));
+        m._hovered = true;
+      }
+    } catch(err) {}
+  }
+}, true);
+
+document.addEventListener('mouseleave', function(e) {
+  if (typeof e.target.closest !== 'function') return;
+  var card = e.target.closest('.listing-card');
+  if (!card) return;
+  var match = card.id.match(/^card-(\d+)$/);
+  if (!match) return;
+  var m = markerMap[String(match[1])];
+  if (m && m._hovered && m !== activeBounceMarker) {
+    resetMarkerStyle(m);
+    m._hovered = false;
+  }
+}, true);
+
+// 卡片点击委托
+document.addEventListener('click', function(e) {
+  if (typeof e.target.closest !== 'function') return;
+  var card = e.target.closest('.listing-card');
+  if (!card) return;
+  if (e.target.closest('a, button, .fav-btn')) return;
+  var match = card.id.match(/^card-(\d+)$/);
+  if (match) handleCardClick(parseInt(match[1]));
+});
+
+function timeAgo(iso) {
+  if (!iso) return '<span class="time-fresh" style="color:#999">未知</span>';
+  var ts = new Date(iso).getTime();
+  if (isNaN(ts)) return '<span class="time-fresh" style="color:#999">未知</span>';
+  var diff = Date.now() - ts;
+  var mins = Math.floor(diff / 60000);
+  var hrs = Math.floor(mins / 60);
+  var days = Math.floor(hrs / 24);
+  var color = hrs < 72 ? '#2ed573' : (days < 14 ? '#ffa502' : '#ff4757');
+  var label = mins < 1 ? '刚刚' : (mins < 60 ? mins + '分钟前' : (hrs < 24 ? hrs + '小时前' : days + '天前'));
+  var badge = days >= 14 ? ' <span style="color:#ff4757;font-size:11px">· 可能已租出</span>' : '';
+  return '<span class="time-fresh" style="color:' + color + '">' + label + '</span>' + badge;
+}
+
+// ——— 收藏 ———
+var FAV_KEY = 'rental_favs';
+function getFavs() { try { return JSON.parse(localStorage.getItem(FAV_KEY) || '[]'); } catch(e) { return []; } }
+function isFav(url, id) { return getFavs().includes(url) || (id ? _favIds.indexOf(id) >= 0 : false); }
+function isFavById(id) { return _favIds.indexOf(id) >= 0; }
+
+async function toggleFav(url, id) {
+  var wasFav = isFav(url) || isFavById(id);
+  var btn = document.querySelector('#card-' + id + ' .fav-btn');
+
+  // 乐观更新 UI
+  if (wasFav) {
+    _favIds = _favIds.filter(function(x) { return x !== id; });
+  } else {
+    if (_favIds.indexOf(id) < 0) _favIds.push(id);
+  }
+  if (btn) btn.classList.toggle('active', !wasFav);
+
+  // localStorage 同步
+  var favs = getFavs();
+  var idx = favs.indexOf(url);
+  if (wasFav) {
+    if (idx >= 0) favs.splice(idx, 1);
+  } else {
+    if (idx < 0 && url) favs.push(url);
+  }
+  localStorage.setItem(FAV_KEY, JSON.stringify(favs));
+
+  // 服务端 API
+  try {
+    if (wasFav) {
+      await fetch('/api/favorites/' + id, { method: 'DELETE' });
+    } else {
+      await fetch('/api/favorites/' + id, { method: 'POST' });
+    }
+    updateFavCountBadge();
+  } catch(e) {
+    // API 失败回滚 UI
+    console.warn('收藏 API 失败，回滚:', e);
+    if (wasFav) {
+      if (_favIds.indexOf(id) < 0) _favIds.push(id);
+    } else {
+      _favIds = _favIds.filter(function(x) { return x !== id; });
+    }
+    if (btn) btn.classList.toggle('active', wasFav);
+  }
+}
+
+async function loadFavoriteIds() {
+  try {
+    var resp = await fetch('/api/favorites/ids');
+    var data = await resp.json();
+    _favIds = data.ids || [];
+    updateFavCountBadge();
+    // 更新当前页面上的收藏按钮状态
+    document.querySelectorAll('.fav-btn').forEach(function(btn) {
+      var id = parseInt(btn.getAttribute('data-id'));
+      var url = btn.getAttribute('data-url');
+      btn.classList.toggle('active', isFav(url) || isFavById(id));
+    });
+  } catch(e) {
+    console.warn('加载收藏列表失败:', e);
+  }
+}
+
+function updateFavCountBadge() {
+  var n = _favIds.length;
+  var hdr = document.getElementById('headerFavBtn');
+  if (hdr) {
+    var badge = hdr.querySelector('.fav-count');
+    if (badge) badge.textContent = n;
+  }
+}
+
+function toggleFavFilter() {
+  favoritesOnly = !favoritesOnly;
+  var hdr = document.getElementById('headerFavBtn');
+  if (hdr) hdr.classList.toggle('active', favoritesOnly);
+  search(true);
+}
+
+// ——— 热门区域快速搜索 ———
+function quickSearch(area) {
+  document.getElementById('keyword').value = area;
+  search(true);
+}
+
+// ——— 地址自动补全 ———
+var _commuteTimer = null, _commuteIdx = -1, _tipsCache = [];
+var _HIST_KEY = 'addr_history';
+function _getHistory() { try { return JSON.parse(localStorage.getItem(_HIST_KEY) || '[]'); } catch(e) { return []; } }
+function _saveHistory(addr) {
+  if (!addr || !addr.trim()) return;
+  var h = _getHistory().filter(function(a) { return a !== addr; });
+  h.unshift(addr);
+  if (h.length > 10) h.length = 10;
+  localStorage.setItem(_HIST_KEY, JSON.stringify(h));
+}
+
+function setupCommuteAutocomplete() {
+  var input = document.getElementById('commute_ref');
+  var dropdown = document.getElementById('commuteDropdown');
+  if (!input || !dropdown) return;
+
+  function hideDropdown() { dropdown.classList.remove('show'); _commuteIdx = -1; }
+
+  function selectTip(tip) {
+    _saveHistory(input.value.trim() || tip.name);
+    input.value = tip.name;
+    commuteCoords = { lng: tip.lng, lat: tip.lat };
+    document.getElementById('commuteStatus').textContent = '✅ ' + (tip.district || tip.name);
+    hideDropdown();
+    setSort('distance', document.getElementById('sortDistance'));
+    updateReferenceMarker(true);
+    search(true);
+  }
+
+  function _showHistory() {
+    var hist = _getHistory();
+    if (!hist.length) return;
+    _commuteIdx = -1;
+    _tipsCache = [];  // 清除旧 API 数据，防止历史模式下误选
+    var html = '<div class=\"tip-item\" style=\"color:var(--text-muted);font-size:11px;cursor:default;border-bottom:1px solid #f0f0f0\">最近搜索</div>';
+    hist.forEach(function(a, i) {
+      html += '<div class=\"tip-item\" data-history=\"' + i + '\">'
+        + '<div class=\"tip-name\">🕐 ' + escapeHtml(a) + '</div></div>';
+    });
+    dropdown.innerHTML = html;
+    dropdown.classList.add('show');
+  }
+
+  input.addEventListener('focus', function() {
+    if (input.value.trim() === '') _showHistory();
+  });
+
+  input.addEventListener('input', function() {
+    clearTimeout(_commuteTimer);
+    var val = input.value.trim();
+    if (!val) { _showHistory(); return; }
+    _commuteTimer = setTimeout(async function() {
+      try {
+        var resp = await fetch('/api/inputtips?keywords=' + encodeURIComponent(val));
+        var data = await resp.json();
+        _tipsCache = data.tips || [];
+        if (!_tipsCache.length) { hideDropdown(); return; }
+        _commuteIdx = -1;
+        var html = '';
+        _tipsCache.forEach(function(t, i) {
+          html += '<div class="tip-item" data-idx="' + i + '">'
+            + '<div class="tip-name">' + escapeHtml(t.name) + '</div>'
+            + (t.district ? '<div class="tip-district">' + escapeHtml(t.district) + (t.address ? ' · ' + escapeHtml(t.address) : '') + '</div>' : '')
+            + '</div>';
+        });
+        dropdown.innerHTML = html;
+        dropdown.classList.add('show');
+      } catch(e) { hideDropdown(); }
+    }, 250);
+  });
+
+  input.addEventListener('keydown', function(e) {
+    var items = dropdown.querySelectorAll('.tip-item');
+    if (!items.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); _commuteIdx = Math.min(_commuteIdx + 1, items.length - 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); _commuteIdx = Math.max(_commuteIdx - 1, 0); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (_commuteIdx >= 0) {
+        var item = items[_commuteIdx];
+        var histIdx = item.getAttribute('data-history');
+        if (histIdx !== null) {
+          var addr = _getHistory()[parseInt(histIdx)];
+          if (addr) { input.value = addr; hideDropdown(); setCommuteRef(); }
+        } else if (_tipsCache[_commuteIdx]) {
+          selectTip(_tipsCache[_commuteIdx]);
+        }
+      }
+    }
+    else if (e.key === 'Escape') { hideDropdown(); return; }
+    else return;
+    items.forEach(function(it, i) { it.classList.toggle('active', i === _commuteIdx); });
+  });
+
+  dropdown.addEventListener('click', function(e) {
+    if (!e.target.closest) return;
+    var item = e.target.closest('.tip-item');
+    if (!item) return;
+    // 历史记录点击
+    var histIdx = item.getAttribute('data-history');
+    if (histIdx !== null) {
+      var addr = _getHistory()[parseInt(histIdx)];
+      if (addr) {
+        input.value = addr;
+        hideDropdown();
+        setCommuteRef();  // geocode + search
+      }
+      return;
+    }
+    // 自动补全点击
+    var idx = parseInt(item.getAttribute('data-idx'));
+    if (_tipsCache[idx]) selectTip(_tipsCache[idx]);
+  });
+
+  document.addEventListener('click', function(e) {
+    if (!dropdown.contains(e.target) && e.target !== input) hideDropdown();
+  });
+}
+
+// ——— 通勤距离排序 ———
+var commuteCoords = null;
+async function setCommuteRef() {
+  var addr = document.getElementById('commute_ref').value.trim();
+  var status = document.getElementById('commuteStatus');
+  if (!addr) {
+    commuteCoords = null;
+    status.textContent = '';
+    if (referenceMarker) {
+      try { referenceMarker.setMap(null); } catch(e) {}
+      referenceMarker = null;
+    }
+    _clearDistanceRings();
+    return;
+  }
+  status.textContent = '定位中...';
+  try {
+    var resp = await fetch('/api/geocode?address=' + encodeURIComponent(addr));
+    var data = await resp.json();
+    if (data.lng && data.lat) {
+      commuteCoords = { lng: data.lng, lat: data.lat };
+      status.textContent = '✅ ' + data.address;
+      _saveHistory(addr);
+      setSort('distance', document.getElementById('sortDistance'));
+      search(true);
+    } else {
+      status.textContent = '❌ 地址未找到';
+    }
+  } catch(e) {
+    status.textContent = '定位失败';
+  }
+}
+
+// ——— 回到顶部 FAB ———
+function setupFab() {
+  var fab = document.createElement('button');
+  fab.className = 'fab';
+  fab.innerHTML = '↑';
+  fab.title = '回到顶部';
+  fab.onclick = function() { window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  document.body.appendChild(fab);
+  window.addEventListener('scroll', function() {
+    fab.style.display = window.scrollY > 500 ? 'block' : 'none';
+  });
+}
+
+// ——— 启动 ———
+window.onload = function() {
+  setupFab();
+  initMap();
+  setupCommuteAutocomplete();
+  setupInfiniteScroll();
+  loadFavoriteIds();
+  search(true);
+};
+
+</script>
+</body>
+</html>

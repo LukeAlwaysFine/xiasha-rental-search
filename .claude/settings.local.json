@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(python -c ' *)",
+      "Bash(python run.py)",
+      "Bash(curl -s http://127.0.0.1:8000/api/search?keyword=test)",
+      "Bash(curl *)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'Results: {d[\\\\\"total\\\\\"]} listing\\(s\\)'\\)\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'下沙 0-3000: {d[\\\\\"total\\\\\"]} results'\\); [print\\(f'  {l[\\\\\"title\\\\\"]} | {l[\\\\\"price\\\\\"]}元'\\) for l in d['listings']]\"、)",
+      "Skill(keybindings-help)",
+      "WebFetch(domain:www.morphllm.com)"
+    ]
+  }
+}

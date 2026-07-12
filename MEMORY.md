@@ -1,0 +1,11 @@
+- [项目概览](memory/project-overview.md) — 项目背景、目标、MVP 范围
+- [技术选型](memory/tech-stack.md) — 技术栈与月成本估算
+- [产品决策](memory/product-decisions.md) — 已确认的产品决策记录
+- [LLM 优化](memory/llm-optimization.md) — DeepSeek V4 AsyncOpenAI 配置，同步→异步 17x 提速
+- [平台策略](memory/platform-strategy.md) — 各平台可行性评估和风险决策
+- [架构决策](memory/architecture-decisions.md) — 搜索降级、分页、预热、导入端点
+- [产品升级决策](memory/product-upgrade-decisions.md) — 地图优先、LLM 质量评分、平台扩展三阶段路线
+- [Sprint 1 Phase 1-3 复盘](memory/sprint1-retro-phase1-3.md) — 数据安全+前端+技术债修复记录
+- [Sprint 1 最终复盘](memory/sprint1-final-retrospective.md) — 全7阶段成果
+- [Sprint 1 完成验证](memory/sprint1-completion-verification.md) — 30/30 任务全部完成 ✅
+- [第二轮代码审查修复](memory/code-review-round2-fixes.md) — 21 项问题修复，18 已修复/2 误报

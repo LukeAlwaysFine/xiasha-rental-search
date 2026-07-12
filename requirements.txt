@@ -1,0 +1,24 @@
+# 后端
+fastapi>=0.110.0
+uvicorn>=0.29.0
+python-dotenv>=1.0.0
+apscheduler>=3.10.0
+
+# 数据库
+# SQLite 是 stdlib，无需额外依赖
+
+# HTTP
+httpx>=0.27.0
+
+# HTML 解析（豆瓣/微博）
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# LLM 调用 (openai 兼容接口，通义千问/DeepSeek 都用这个)
+openai>=1.30.0
+
+# 闲鱼/微博抓取 (async Playwright)
+playwright>=1.40.0
+
+# 高德地图
+# REST API，httpx 调用即可
