@@ -1,5 +1,35 @@
 # Bug 记录与修复
 
+## 2026-07-12：UI 优化 — 交互 Bug 修复
+
+### 地址下拉菜单被裁切
+- **现象**：通勤地址输入框的历史记录/自动补全下拉被筛选面板裁切，无法完整显示
+- **根因**：filter-body 改为 grid 动画后添加了 `overflow: hidden`，下拉菜单的 `position: absolute` 被 clip
+- **修复**：去掉 filter-body 的 `overflow: hidden`，`grid-template-rows: 0fr` 本身已能隐藏折叠内容
+
+### 历史记录删除 ✕ 无反应
+- **现象**：点击下拉菜单中历史记录右侧的 ✕ 按钮没有效果
+- **根因**：`_deleteHistory()` 定义在模块级作用域，而其依赖的 `_showHistory()` 在 `setupCommuteAutocomplete` 闭包内，跨作用域调用导致 ReferenceError
+- **修复**：将 `_deleteHistory` 移入 `setupCommuteAutocomplete` 闭包内
+
+### 历史记录删除后列表不刷新
+- **现象**：删除最后一条历史后，下拉菜单仍显示旧内容
+- **根因**：`_showHistory()` 在 `hist.length === 0` 时直接 `return`，未清空 `dropdown.innerHTML`
+- **修复**：空历史时主动清空 dropdown 并隐藏
+
+### 地址输入框 ✕ 按钮不显示
+- **现象**：程序设置输入框值后 ✕ 清除按钮不出现
+- **根因**：仅靠 `oninput` 事件切换按钮显示，`input.value` 程序赋值不触发 `oninput`
+- **修复**：改用 CSS class `.commute-wrap.has-value .commute-clear { display: flex }`，所有设置值的路径同步 toggle class
+
+### 地址历史记录保存用户输入文字而非 Amap 地址
+- **现象**：`selectTip()` 保存 `input.value`（用户原始输入）而非高德返回的地址名
+- **修复**：改为 `_saveHistory(tip.name)`
+
+### 再次点击地址输入框不显示历史
+- **现象**：输入框已聚焦时再次点击不出现下拉
+- **修复**：同时监听 `click` 和 `focus` 事件触发 `_showHistory()`
+
 ## 2026-07-12：hours_ago 过滤失效 — 非 ISO publish_time 导致 SQL 字符串比较错误
 
 ### 现象

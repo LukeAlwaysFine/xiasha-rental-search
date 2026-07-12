@@ -122,16 +122,23 @@ src/
 
 taste-skill 体系：珊瑚红 `#ff6b6b`，深蓝灰 `#1a1a2e`。Geist 字体。圆角 12px。阴影 `0 1px 3px rgba(0,0,0,.06)` → hover `0 8px 24px rgba(0,0,0,.12)`。动效 `cubic-bezier(.4,0,.2,1)`，支持 `prefers-reduced-motion`。
 
+暗色模式：`data-theme="dark"` CSS 变量覆盖所有颜色，`localStorage` 持久化，优先跟随系统 `prefers-color-scheme`。Header 右侧 🌙/☀️ 切换按钮。地图始终保持原始样式不受主题影响。
+
 ### 前端交互
 
-- 所有筛选点击即搜索；芯片 `data-group` 分组匹配；无坐标房源 SQL `CASE WHEN lng IS NULL THEN 1` 排最后
-- 地址搜索：`/api/inputtips` 下拉 + localStorage 最近 10 条历史
+- 所有筛选点击即搜索（300ms debounce，搜索按钮立即触发）；芯片 `data-group` 分组匹配；无坐标房源 SQL `CASE WHEN lng IS NULL THEN 1` 排最后
+- 骨架屏加载：3 个脉冲动画骨架卡片替代 spinner，数据返回后替换
+- Toast 通知：右上角 `success`/`error`/`info`，3s 自动消失。收藏/定位反馈已接入
+- 地址搜索：`/api/inputtips` 下拉 + localStorage 最近 10 条历史（可逐条 ✕ 删除，保存高德返回的实际地址名而非用户输入文字）。输入框内 ✕ 清除按钮
+- 筛选面板：一键清除筛选按钮 + `grid-template-rows` 折叠动画 + 折叠状态 localStorage 记忆
+- 移动端 (<900px)：浮动 🗺️/📋 按钮切换全屏地图/列表
 - 地图：初始聚焦下沙 `[120.38, 30.31]` zoom 15；全量 markers（≤1000）网格聚类（~16m）；6 层暖→冷六色渐变距离圈（200m-5km）；AMap.Scale 比例尺；金色参考标记（📍）；距离模式 zoom 14 聚焦通勤点
-- 标记三层覆盖：DB 预存 → 批量 geocode（2并发+逐条 gen 检查）→ 点击 fallback（`_offsetCoord` 去重叠 + `_statusTimeoutId` 防竞态）
+- 标记三层覆盖：DB 预存 → 批量 geocode（2并发+逐条 gen 检查）→ 点击 fallback（`_offsetCoord` 去重叠）
 - 房源更新通知：状态栏脉冲动画 + 30s 轮询新数据
 - 安全：`escapeHtml`/`escapeAttr` 剥离控制字符，`safeUrl` 白名单阻止伪协议，外链 `rel="noopener"`
 - 收藏：卡片圆形 ♥ 按钮乐观更新 → API 同步（失败回滚）；头部"♥ 我的收藏"按钮切换收藏模式；`_favIds` 数组驱动 UI 标记
 - 竞态控制：三轮询互斥，reset 清除旧 interval
+- 无障碍：`:focus-visible` 焦点环，交互元素 `aria-label`，时间标签颜色 ● 圆点
 
 ### Python 约定
 

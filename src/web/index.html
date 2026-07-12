@@ -164,7 +164,6 @@
   .filters.open .filter-header .arrow { transform: rotate(180deg); }
   .filters.open .filter-header { border-bottom-color: var(--border); }
   .filter-body { padding: 0 20px; display: grid; grid-template-rows: 0fr; transition: grid-template-rows .35s ease, padding .35s ease; }
-  .filter-body > div { overflow: hidden; }
   .filters.open .filter-body { grid-template-rows: 1fr; padding: 16px 20px; }
   .filter-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
   .filter-row:last-child { margin-bottom: 0; }
@@ -479,6 +478,8 @@
     font-family: inherit;
   }
   .commute-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,107,107,.1); }
+  .commute-clear { display: none; }
+  .commute-wrap.has-value .commute-clear { display: flex; }
   .commute-btn {
     padding: 8px 16px; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm);
     font-size: 13px; cursor: pointer; font-weight: 600; transition: all var(--transition);
@@ -598,7 +599,8 @@
       <div class="filter-row">
         <label>地址</label>
         <span class="commute-wrap">
-          <input type="text" id="commute_ref" placeholder="输入地址，如：金沙湖地铁站..." class="commute-input" autocomplete="off" />
+          <input type="text" id="commute_ref" placeholder="输入地址，如：金沙湖地铁站..." class="commute-input" autocomplete="off" oninput="this.parentElement.classList.toggle('has-value', !!this.value)" />
+          <button class="commute-clear" onclick="clearCommuteRef()" title="清除" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:22px;height:22px;border:none;background:var(--text-muted);color:#fff;border-radius:50%;cursor:pointer;font-size:12px;line-height:1;align-items:center;justify-content:center;transition:all var(--transition)" onmouseenter="this.style.background='var(--accent)'" onmouseleave="this.style.background='var(--text-muted)'">✕</button>
           <div id="commuteDropdown" class="commute-dropdown"></div>
         </span>
         <button onclick="setCommuteRef()" class="commute-btn">按距离排</button>
@@ -692,7 +694,9 @@ function clearFilters() {
   // Reset hours select
   document.getElementById('hours_ago').value = '';
   // Reset commute
-  document.getElementById('commute_ref').value = '';
+  var cr = document.getElementById('commute_ref');
+  cr.value = '';
+  cr.parentElement.classList.remove('has-value');
   commuteCoords = null;
   document.getElementById('commuteStatus').textContent = '';
   if (referenceMarker) { try { referenceMarker.setMap(null); } catch(e) {} referenceMarker = null; }
@@ -1890,7 +1894,6 @@ function _saveHistory(addr) {
   if (h.length > 10) h.length = 10;
   localStorage.setItem(_HIST_KEY, JSON.stringify(h));
 }
-
 function setupCommuteAutocomplete() {
   var input = document.getElementById('commute_ref');
   var dropdown = document.getElementById('commuteDropdown');
@@ -1899,8 +1902,9 @@ function setupCommuteAutocomplete() {
   function hideDropdown() { dropdown.classList.remove('show'); _commuteIdx = -1; }
 
   function selectTip(tip) {
-    _saveHistory(input.value.trim() || tip.name);
+    _saveHistory(tip.name);
     input.value = tip.name;
+    input.parentElement.classList.add('has-value');
     commuteCoords = { lng: tip.lng, lat: tip.lat };
     document.getElementById('commuteStatus').textContent = '✅ ' + (tip.district || tip.name);
     hideDropdown();
@@ -1911,19 +1915,32 @@ function setupCommuteAutocomplete() {
 
   function _showHistory() {
     var hist = _getHistory();
-    if (!hist.length) return;
     _commuteIdx = -1;
-    _tipsCache = [];  // 清除旧 API 数据，防止历史模式下误选
-    var html = '<div class=\"tip-item\" style=\"color:var(--text-muted);font-size:11px;cursor:default;border-bottom:1px solid #f0f0f0\">最近搜索</div>';
+    _tipsCache = [];
+    if (!hist.length) { dropdown.innerHTML = ''; dropdown.classList.remove('show'); return; }
+    var html = '<div class="tip-item" style="color:var(--text-muted);font-size:11px;cursor:default;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center">最近搜索</div>';
     hist.forEach(function(a, i) {
-      html += '<div class=\"tip-item\" data-history=\"' + i + '\">'
-        + '<div class=\"tip-name\">🕐 ' + escapeHtml(a) + '</div></div>';
+      html += '<div class="tip-item" data-history="' + i + '" style="display:flex;justify-content:space-between;align-items:center">'
+        + '<div class="tip-name" style="flex:1">🕐 ' + escapeHtml(a) + '</div>'
+        + '<button class="hist-del-btn" data-hist-idx="' + i + '" title="删除" style="flex-shrink:0;width:24px;height:24px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:16px;line-height:1;border-radius:50%;transition:all var(--transition);display:flex;align-items:center;justify-content:center" onmouseenter="this.style.background=\'rgba(255,107,107,.15)\';this.style.color=\'var(--accent)\'" onmouseleave="this.style.background=\'transparent\';this.style.color=\'var(--text-muted)\'">✕</button>'
+        + '</div>';
     });
     dropdown.innerHTML = html;
     dropdown.classList.add('show');
   }
 
+  function _deleteHistory(index) {
+    var h = _getHistory();
+    if (index < 0 || index >= h.length) return;
+    h.splice(index, 1);
+    localStorage.setItem(_HIST_KEY, JSON.stringify(h));
+    _showHistory();
+  }
+
   input.addEventListener('focus', function() {
+    if (input.value.trim() === '') _showHistory();
+  });
+  input.addEventListener('click', function() {
     if (input.value.trim() === '') _showHistory();
   });
 
@@ -1963,7 +1980,7 @@ function setupCommuteAutocomplete() {
         var histIdx = item.getAttribute('data-history');
         if (histIdx !== null) {
           var addr = _getHistory()[parseInt(histIdx)];
-          if (addr) { input.value = addr; hideDropdown(); setCommuteRef(); }
+          if (addr) { input.value = addr; input.parentElement.classList.add('has-value'); hideDropdown(); setCommuteRef(); }
         } else if (_tipsCache[_commuteIdx]) {
           selectTip(_tipsCache[_commuteIdx]);
         }
@@ -1976,6 +1993,15 @@ function setupCommuteAutocomplete() {
 
   dropdown.addEventListener('click', function(e) {
     if (!e.target.closest) return;
+
+    // 删除按钮：先处理，不触发搜索
+    var delBtn = e.target.closest('.hist-del-btn');
+    if (delBtn) {
+      var idx = parseInt(delBtn.getAttribute('data-hist-idx'));
+      if (!isNaN(idx)) _deleteHistory(idx);
+      return;
+    }
+
     var item = e.target.closest('.tip-item');
     if (!item) return;
     // 历史记录点击
@@ -1984,14 +2010,15 @@ function setupCommuteAutocomplete() {
       var addr = _getHistory()[parseInt(histIdx)];
       if (addr) {
         input.value = addr;
+        input.parentElement.classList.add('has-value');
         hideDropdown();
         setCommuteRef();  // geocode + search
       }
       return;
     }
     // 自动补全点击
-    var idx = parseInt(item.getAttribute('data-idx'));
-    if (_tipsCache[idx]) selectTip(_tipsCache[idx]);
+    var idx2 = parseInt(item.getAttribute('data-idx'));
+    if (_tipsCache[idx2]) selectTip(_tipsCache[idx2]);
   });
 
   document.addEventListener('click', function(e) {
@@ -2001,6 +2028,23 @@ function setupCommuteAutocomplete() {
 
 // ——— 通勤距离排序 ———
 var commuteCoords = null;
+function clearCommuteRef() {
+  var input = document.getElementById('commute_ref');
+  input.value = '';
+  input.parentElement.classList.remove('has-value');
+  // 重置通勤状态
+  commuteCoords = null;
+  document.getElementById('commuteStatus').textContent = '';
+  if (referenceMarker) { try { referenceMarker.setMap(null); } catch(e) {} referenceMarker = null; }
+  _clearDistanceRings();
+  // 如果当前排序是距离，切回综合
+  var distBtn = document.getElementById('sortDistance');
+  if (distBtn && distBtn.classList.contains('active')) {
+    setSort('comprehensive', document.querySelector('.filter-row .chip[data-sort="comprehensive"]'));
+  }
+  _debouncedSearch(true);
+  input.focus();
+}
 async function setCommuteRef() {
   var addr = document.getElementById('commute_ref').value.trim();
   var status = document.getElementById('commuteStatus');
@@ -2075,10 +2119,7 @@ function applyTheme(theme) {
   var btn = document.getElementById('themeToggle');
   if (btn) btn.innerHTML = theme === 'dark' ? '☀️' : '🌙';
   localStorage.setItem('theme', theme);
-  // 高德地图暗色（如支持）
-  if (map) {
-    try { map.setMapStyle(theme === 'dark' ? 'amap://styles/dark' : 'amap://styles/light'); } catch(e) {}
-  }
+  // 地图保持原样，不随主题变化
 }
 function toggleTheme() {
   var cur = document.documentElement.getAttribute('data-theme') || 'light';
