@@ -82,8 +82,6 @@ async def process_listing_item(item: dict, conn, sem: asyncio.Semaphore) -> dict
         extracted["_agent_llm_signals"] = detect_meta.get("llm_signals", [])
         extracted["_agent_llm_reasoning"] = detect_meta.get("llm_reasoning", "")
         extracted["_agent_hybrid_score"] = detect_meta.get("hybrid_score", 0)
-        if landlord_type == "疑似中介" and extracted.get("is_sublet"):
-            landlord_type = "个人"
         extracted["landlord_type"] = landlord_type
 
         # 合并 API 提供的结构化图片
@@ -353,18 +351,9 @@ async def fetch_new_listings(
                 new_listings.append(extracted)
         conn.commit()
 
-        # ——— 入库后批量重评中介 ———
+        # ——— 入库后自动补齐缺失坐标 ———
         await _progress("正在收尾处理...")
         if new_listings:
-            from src.detector.agent_detector import reevaluate_all
-            try:
-                re_result = reevaluate_all(conn)
-                if re_result["updated"] > 0:
-                    logger.info(f"fetch_new_listings: 中介重评修正 {re_result['updated']} 条")
-            except Exception as e:
-                logger.warning(f"fetch_new_listings: 中介重评失败: {e}")
-
-            # 自动补齐缺失坐标（后台，不阻塞）
             try:
                 geo_cnt = await batch_geocode_missing()
                 if geo_cnt > 0:

@@ -1,5 +1,42 @@
 # Bug 记录与修复
 
+## 2026-07-13：is_sublet 覆盖与 Poster 检查规则冲突
+
+### 现象
+
+"个人转租下沙区1500元小窝"（poster=尼古拉波）被标为"个人"。但其闲鱼主页仅 1 条出租房、无其他物品，按 Poster 检查规则应判"疑似中介"。
+
+### 根因
+
+两层矛盾：
+
+1. **Pipeline `is_sublet` 覆盖过宽**（`pipeline.py:85-86`）：转租 + 疑似中介 → 直接标"个人"，绕过了"个人唯一来源是 Poster 检查"的架构约定
+2. **Poster 检查无法反向修正**：Pipeline 已标"个人"后，Poster 检查的 UPDATE 条件 `landlord_type NOT IN ('中介','疑似中介')` 会跳过此条，无法降级为"疑似中介"
+
+### 修复
+
+**移除 Pipeline `is_sublet` 覆盖**（`pipeline.py`）：删除 `is_sublet → 个人` 两行。Pipeline 不再产出"个人"，只产出"中介"/"疑似中介"。
+
+**Poster 检查融合 Pipeline 判定**（`xianyu_async.py`）：
+
+| Poster 结果 | Pipeline 结果 | 最终 |
+|:--:|:--:|:--:|
+| 中介 | 任意 | **中介** |
+| 疑似中介 | 中介 | **中介** ↑ |
+| 个人 | 中介 | **疑似中介** ↓ |
+| 其他 | — | Poster 结果为准 |
+
+Poster 检查时先读当前 `landlord_type` 作为 pipeline 判定，融合后再写回。
+
+### 涉及文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/pipeline.py:85-86` | 删除 `is_sublet → 个人` 覆盖 |
+| `src/crawler/xianyu_async.py:604-664` | Poster 检查四分支重构为融合逻辑 |
+| `CLAUDE.md` | 关键决策更新融合规则 |
+| `docs/backend.md` | 中介检测 + Poster 检测章节更新 |
+
 ## 2026-07-13：Poster 检查规则细化 — 利用总物品数区分个人/中介
 
 ### 现象

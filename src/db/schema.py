@@ -67,8 +67,12 @@ def init_db(path: str = None) -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_favorites_listing ON favorites(listing_id);
         CREATE INDEX IF NOT EXISTS idx_favorites_created ON favorites(created_at);
     """)
-    # 迁移：添加 LLM 评分列（兼容旧数据库）
-    for col, col_type in [("_llm_score", "REAL"), ("_llm_reason", "TEXT")]:
+    # 迁移：兼容旧数据库新增列
+    for col, col_type in [
+        ("_llm_score", "REAL"),
+        ("_llm_reason", "TEXT"),
+        ("poster_checked_at", "TEXT"),  # poster 上次检查时间，24h 内跳过
+    ]:
         try:
             conn.execute(f"ALTER TABLE listings ADD COLUMN {col} {col_type}")
         except sqlite3.OperationalError:
@@ -97,7 +101,7 @@ def upsert_listing(conn: sqlite3.Connection, data: dict) -> int | None:
 
     对已存在的记录（同 source_url）：
     - 使用 COALESCE 渐进式填充缺失字段（坐标、图片、户型、面积等）
-    - landlord_type: 从"疑似中介"升级到"个人"/"中介"，但中介不会被降级为个人
+    - landlord_type: 中介永不降级；个人→中介可升级，个人不降级；疑似中介/NULL→个人/中介可升级
     - publish_time: 回填 NULL 值
 
     注意：此函数不调用 conn.commit()。调用方应在批量操作后统一 commit。
@@ -121,9 +125,11 @@ def upsert_listing(conn: sqlite3.Connection, data: dict) -> int | None:
                     THEN excluded.images ELSE listings.images
                 END,
                 landlord_type = CASE
-                    WHEN listings.landlord_type = '疑似中介' AND excluded.landlord_type != '疑似中介'
-                    THEN excluded.landlord_type
-                    ELSE listings.landlord_type
+                    WHEN listings.landlord_type = '中介' THEN '中介'
+                    WHEN listings.landlord_type = '个人' AND excluded.landlord_type = '中介' THEN '中介'
+                    WHEN listings.landlord_type = '个人' THEN '个人'
+                    WHEN excluded.landlord_type IN ('个人', '中介') THEN excluded.landlord_type
+                    ELSE COALESCE(listings.landlord_type, excluded.landlord_type, '疑似中介')
                 END,
                 publish_time = CASE
                     WHEN listings.publish_time IS NULL THEN excluded.publish_time

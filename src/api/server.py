@@ -177,21 +177,6 @@ _poster_check_status = {"running": False, "found": 0, "suspected": 0, "personal"
 scheduler = AsyncIOScheduler()
 
 
-async def scheduled_agent_reeval():
-    """每小时：全库中介重新评估（纯 SQL，利用已积累的 poster/contact 数据，不消耗 LLM）。"""
-    from src.detector.agent_detector import reevaluate_all
-    logger.info("scheduled_agent_reeval: 开始全库中介重评...")
-    try:
-        conn = get_conn()
-        try:
-            result = reevaluate_all(conn)
-            logger.info(f"scheduled_agent_reeval: 修正 {result['updated']} 条")
-        finally:
-            conn.close()
-    except Exception as e:
-        logger.error(f"scheduled_agent_reeval: 失败: {e}", exc_info=True)
-
-
 async def scheduled_poster_check():
     """每6小时：访问发帖人闲鱼主页，检测中介（Playwright 自动化，不消耗 LLM）。"""
     from src.crawler.xianyu_async import check_posters_for_agents
@@ -277,38 +262,15 @@ async def lifespan(app: FastAPI):
     # 抓取已改为手动触发（/api/fetch），不再定时执行
     scheduler.add_job(scheduled_cleanup, "interval", hours=6, id="cleanup",
                       coalesce=True, misfire_grace_time=3600)
-    scheduler.add_job(scheduled_agent_reeval, "interval", hours=1, id="agent_reeval",
-                      coalesce=True, misfire_grace_time=1800)
     scheduler.add_job(scheduled_poster_check, "interval", hours=6, id="poster_check",
                       coalesce=True, misfire_grace_time=3600)
     scheduler.start()
-    # 启动时执行一次全量中介修正
-    asyncio.create_task(_startup_agent_fix())
     # 启动增强缓存清理任务
     asyncio.create_task(_cleanup_enhance_cache())
     # 抓取已改为手动触发，不再需要启动预热
     yield
     scheduler.shutdown()
     await close_http_client()
-
-
-async def _startup_agent_fix():
-    """启动时执行一次全量中介状态修正。
-    注意：init_db() 是同步调用且在 lifespan 中首先执行，
-    sleep(3) 是保守等待，防止极端慢环境下的竞态。
-    """
-    await asyncio.sleep(3)  # init_db() 已同步完成，sleep 是安全余量
-    from src.detector.agent_detector import reevaluate_all
-    try:
-        conn = get_conn()
-        try:
-            result = reevaluate_all(conn)
-            if result["updated"] > 0:
-                logger.info(f"startup_agent_fix: 修正 {result['updated']} 条中介标记")
-        finally:
-            conn.close()
-    except Exception as e:
-        logger.warning(f"startup_agent_fix: {e}")
 
 
 async def _warmup_fetch():
@@ -696,6 +658,18 @@ async def trigger_fetch(request: Request):
         _fetch_status["new_count"] = len(new_listings)
         _fetch_status["finished_at"] = time.time()
         _fetch_status["error"] = None
+
+        # 入库后自动触发一次 Poster 检查（fire-and-forget，不阻塞响应）
+        if len(new_listings) > 0:
+            async def _auto_poster_check():
+                await asyncio.sleep(2)
+                try:
+                    from src.crawler.xianyu_async import check_posters_for_agents
+                    await check_posters_for_agents(headless=True)
+                except Exception as e:
+                    logger.warning(f"auto_poster_check failed: {e}")
+            asyncio.create_task(_auto_poster_check())
+
         return {"new_count": len(new_listings)}
     except Exception as e:
         _record_final_stage("出错")
@@ -822,8 +796,6 @@ async def _import_listings(data: list[dict]) -> int:
             )
         finally:
             detect_conn.close()
-        if landlord_type == "疑似中介" and extracted.get("is_sublet"):
-            landlord_type = "个人"
         extracted["landlord_type"] = landlord_type
         # 优先使用 API 提供的结构化地址
         api_addr = item.get("api_address", "")

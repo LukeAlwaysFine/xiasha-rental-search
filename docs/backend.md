@@ -6,16 +6,16 @@
 - **提取**: DeepSeek V4 Flash（AsyncOpenAI，thinking=disabled，40 并发）
 - **地理编码**: 高德 API 多策略重试 + Input Tips 兜底（每日上限 30 次，月配额仅 5000）；批量补齐（地址去重 + 2并发 + write_lock）。候选地址只追加命中区名。闲鱼 MTOP 自带 GPS 覆盖 99.8%
 - **数据库**: SQLite WAL 模式，UPSERT 零值覆盖 + `COALESCE` 回填。favorites 表 FK 关联 listings，级联删除
-- **后端**: FastAPI + APScheduler（6h URL 清理 + 6h poster 主页检测 + 1h 中介重评（纯SQL））
+- **后端**: FastAPI + APScheduler（6h URL 清理 + 6h poster 主页检测）
 
 ## 数据流
 
 ```
 搜索 → search_and_fetch → SQLite 缓存（三级降级）→ 手动抓取补数据
-→ AsyncOpenAI 并行提取（40并发，is_rental 默认 false）
+→ AsyncOpenAI 并行提取（40并发，is_rental 默认 false，不判中介）
 → API 坐标优先（闲鱼 MTOP 6 路径探测）→ 高德 geocode 兜底
-→ LLM+Regex 混合中介检测 → 入库 → batch_geocode_missing + reevaluate_all（1h SQL 批量修正）
-→ poster 主页检测（6h，Playwright 进闲鱼主页数出租房+总物品数，四档判定）
+→ Regex 强信号直判中介 → 入库 → batch_geocode_missing
+→ poster 主页检测（6h 定时 + 抓取后自动触发，Playwright 进闲鱼主页数出租房+总物品数，四档判定，融合 pipeline 初判）
 → LLM 重排/去重 → 前端地图 + 列表
 → 抓取成功后自动链式 poster 检查（新增>0时触发，2s延迟）
 ```
@@ -28,20 +28,32 @@ Playwright 拦截 MTOP API，从 JSON 直接提取结构化字段。MTOP 分页�
 
 ⚠️ 反爬：headless 触发 CAPTCHA，依赖首次导航的 API 拦截窗口期。导航用 `wait_until="domcontentloaded"` 超时 15s。
 
-## 中介检测（LLM + Regex 混合）
+## 中介检测（纯本地规则，零 LLM 调用）
 
-LLM 提取时同步分析 agent_signals/confidence/reasoning（零额外调用），`detect_with_llm()` 混合判定：
-- 评分：品牌名 +8 / 话术 +3 / 名称关键词 +4 / 同 poster ≥3 条 +6 / 同 contact ≥2 条 +6 / MTOP 卖家房源数 ≥3 → +10
-- 模板标题正则：纯结构描述+无个人语言 → "疑似中介"
-- 判定：≥6 中介 / <6 疑似中介。**LLM 仅辅助判断中介可疑度，不作"个人"判断** — 只有 Playwright 进主页核实后才标"个人"
+`detect_with_llm()` 不调 AI。**四条强信号命中即"中介"**：
 
-**Poster 主页检测**（6h 定时 + 前端手动触发）：Playwright 进闲鱼主页数出租房+总物品数。**5 并发 tab（Semaphore + asyncio.gather），~6min 完成 500+ poster**。判定：≥3→中介，2→疑似中介，1+无其他→疑似中介，1+有其他→个人。
+| 强信号 | 来源 |
+|------|------|
+| 内容含品牌名（自如、贝壳、链家…） | regex 匹配 |
+| poster 昵称含商业词（租房、公寓、管家…） | regex 匹配 |
+| 同 poster ≥3 条 | 数据库统计 |
+| API 卖家房源 ≥3 | MTOP 直接提供 |
 
-`reevaluate_all()` 每小时 SQL 批量修正：同 poster ≥3 / 同 contact ≥2 / 名称 LIKE。
+四条都不命中 → **"疑似中介"**。Pipeline 永不产出"个人"。
+
+弱信号（中介话术如"多套在租""随时看房"、模板化标题无个人语言）→ 也标"疑似中介"。
+
+**Poster 主页检测**（抓取后自动触发 + 每 6h 定时）：Playwright 进闲鱼主页数出租房+总物品数。**5 并发 tab（Semaphore + asyncio.gather）**。判定：≥3→中介，2→疑似中介，1+无其他→疑似中介，1+有其他→个人。缓存：个人 24h / 疑似中介 6h。
+
+**Poster + Pipeline 融合**：Poster 检查结果为主，Pipeline 初始判定为辅：
+- Poster=中介 → 中介（Poster 决定性）
+- Poster=疑似中介 + Pipeline=中介 → 中介（Pipeline 升级）
+- Poster=个人 + Pipeline=中介 → 疑似中介（Pipeline 拉低信任）
+- 其他组合 → Poster 结果为准
 
 ## 数据入库管线
 
-`fetch_new_listings()` → `process_listing_item()`（pipeline/deep_dive 共享）→ `extract_listing()` → `_is_valid_rental()` → API 坐标优先 / API 地址覆盖 → geocode 兜底 → `detect_with_llm()` + upsert → `batch_geocode_missing()` + `reevaluate_all()`。
+`fetch_new_listings()` → `process_listing_item()`（pipeline/deep_dive 共享）→ `extract_listing()` → `_is_valid_rental()` → API 坐标优先 / API 地址覆盖 → geocode 兜底 → `detect_with_llm()` + upsert → `batch_geocode_missing()`。
 
 过滤：`_NON_RENTAL_TITLE_RE`（30+ 非居住关键词），价格 ¥300-50000。过期：`_is_too_old()` 支持 8+ 种日期格式。豆瓣详情 2 次重试。
 
@@ -91,6 +103,6 @@ src/
 
 - Python 3.11+，每模块一个文件；**必须用 AsyncOpenAI**，V4 关掉 thinking
 - 网络调用 try/except 保护；`publish_time` 从 API 传递，不依赖 LLM
-- 新入库自动过滤 >30 天；每批完成后 `reevaluate_all()`
+- 新入库自动过滤 >30 天；中介判定零 LLM 调用
 - `process_listing_item()` 为 pipeline/deep_dive 共享入口；DB 连接 `try/finally` 保护
 - SQL 拼接优先参数化；速率限制空桶先写时间戳再返回，`threading.Lock` 保护临界区

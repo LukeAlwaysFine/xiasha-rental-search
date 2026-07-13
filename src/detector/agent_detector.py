@@ -130,92 +130,55 @@ def detect_with_llm(
     llm_agent_reasoning: str = "",
     seller_item_count: int | None = None,
 ) -> tuple[str, list[str], dict]:
-    """混合判定：LLM 推理 + regex 规则融合。
+    """本地规则判定发帖人类型。不调 LLM。
 
-    LLM 信号优先级高于 regex：
-    - LLM 高置信 → 直接"中介"
-    - LLM 无 → "疑似中介"（不靠 Playwright 进主页核实不做个人判断）
-    - LLM 中/低 → regex 辅助判定
-    - seller_item_count ≥ 3 → 平台级强信号（卖家在闲鱼发布 ≥3 条 → 中介）
+    强信号 → 直接"中介"：
+    - 品牌名（自如/贝壳/链家…）
+    - poster 昵称含商业词（租房/公寓/管家…）
+    - 同 poster ≥3 条
+    - API 卖家房源 ≥3
+
+    弱信号（中介话术）→ "疑似中介"
+    无信号 → "疑似中介"（不做个人判断）
 
     返回: (标签, 命中规则列表, 元数据)
-    元数据包含: llm_confidence, llm_signals, llm_reasoning, hybrid_score
     """
-    meta = {
-        "llm_confidence": llm_agent_confidence,
-        "llm_signals": llm_agent_signals or [],
-        "llm_reasoning": llm_agent_reasoning,
-        "regex_hits": [],
-        "hybrid_score": 0,  # 0=明确个人, 10=明确中介
-    }
+    hits: list[str] = []
 
-    # ——— LLM 信号评分 ———
-    llm_score = 0
-    if llm_agent_confidence == "高":
-        llm_score = 10
-    elif llm_agent_confidence == "中":
-        llm_score = 6
-    elif llm_agent_confidence == "低":
-        llm_score = 2
-    # "无" → llm_score = 0
-
-    # ——— Regex 规则评分（作为 fallback 和补充） ———
-    regex_hits = []
-    regex_score = 0
-
-    # 1. 品牌名 → 强信号
+    # ——— 强信号：命中即中介 ———
     content_lower = content.lower()
+
+    # 1. 品牌名
     for brand in AGENCY_BRANDS:
         if brand.lower() in content_lower:
-            regex_hits.append(f"品牌名: {brand}")
-            regex_score += 8  # 品牌名是硬证据
+            hits.append(f"品牌名: {brand}")
+            return "中介", hits, {"hybrid_score": 10, "regex_hits": hits}
 
-    # 2. 中介话术
-    for pattern in AGENCY_PATTERNS:
-        if re.search(pattern, content):
-            regex_hits.append(f"话术: {pattern}")
-            regex_score += 3
-
-    # 3. 名称关键词
+    # 2. poster 昵称含商业词
     if poster_id:
         for pattern in AGENCY_NAME_PATTERNS:
             if re.search(pattern, poster_id):
-                regex_hits.append(f"名称关键词: {pattern}")
-                regex_score += 4
-                break
+                hits.append(f"名称关键词: {pattern}")
+                return "中介", hits, {"hybrid_score": 10, "regex_hits": hits}
 
-    # 4. 同账号多房源（DB 内统计）
+    # 3. 同 poster ≥3 条（DB 内统计）
     if conn and poster_id:
         count = count_by_poster(conn, poster_id)
         if count >= 3:
-            regex_hits.append(f"同账号{count}条房源")
-            regex_score += 6
+            hits.append(f"同账号{count}条房源")
+            return "中介", hits, {"hybrid_score": 10, "regex_hits": hits}
 
-    # 4.5. 平台级卖家房源数（从 MTOP API 直接提取，无需 DB 积累）
+    # 4. 平台级卖家房源 ≥3（MTOP API 直接提供）
     if seller_item_count is not None and seller_item_count >= 3:
-        regex_hits.append(f"闲鱼卖家{seller_item_count}条房源")
-        regex_score += 10  # 平台级强信号，与 LLM 高置信等同
+        hits.append(f"闲鱼卖家{seller_item_count}条房源")
+        return "中介", hits, {"hybrid_score": 10, "regex_hits": hits}
 
-    # 5. 同联系方式多房源
-    if conn and contact:
-        count = count_by_contact(conn, contact)
-        if count >= 2:
-            regex_hits.append(f"同联系方式{count}条房源")
-            regex_score += 6
+    # ——— 弱信号：话术 → 疑似中介 ———
+    for pattern in AGENCY_PATTERNS:
+        if re.search(pattern, content):
+            hits.append(f"话术: {pattern}")
 
-    meta["regex_hits"] = regex_hits
-    # 混合评分：取 LLM 和 regex 中的最高分
-    meta["hybrid_score"] = max(llm_score, regex_score)
-
-    # ——— 综合判定 ———
-    all_hits = (llm_agent_signals or []) + regex_hits
-
-    # LLM 高置信 → 直接中介（除非 regex 有反证，极少见）
-    if llm_agent_confidence == "高":
-        return "中介", all_hits, meta
-
-    # 模板标题检测：纯结构描述+无个人语言 → 至少标"疑似中介"
-    # 必须在"LLM 无 → 个人"判断之前执行，否则会死逻辑
+    # ——— 模板标题：纯结构描述+无个人语言 → 疑似中介 ———
     TITLE_TEMPLATE_RE = re.compile(
         r'^[\w一-鿿]+(?:花园|公寓|大厦|小区|城|苑|府|庭|湾|星|里|园)'
         r'(?:\d{2,4}方)?.*(?:整租|合租|单间|转租|出租|租房|[一二两三四五六七八九十]居|[一二两三四五六七八九十]室)',
@@ -224,28 +187,10 @@ def detect_with_llm(
 
     if TITLE_TEMPLATE_RE.search(content.strip()):
         if not HAS_PERSONAL_LANG.search(content):
-            all_hits.insert(0, "模板标题+无个人语言")
-            meta["hybrid_score"] = max(meta["hybrid_score"], 4)
-            return "疑似中介", all_hits, meta
+            hits.insert(0, "模板标题+无个人语言")
 
-    # LLM 明确说无 + regex 也无强信号 → 疑似中介（不靠 Playwright 进主页核实不做个人判断）
-    if llm_agent_confidence == "无" and regex_score < 6:
-        return "疑似中介", all_hits, meta
-
-    # 品牌名或硬证据 → 中介
-    if regex_score >= 8:
-        return "中介", all_hits, meta
-
-    # 混合评分 >= 6 → 中介
-    if meta["hybrid_score"] >= 6:
-        return "中介", all_hits, meta
-
-    # 混合评分 >= 3 → 疑似中介
-    if meta["hybrid_score"] >= 3:
-        return "疑似中介", all_hits, meta
-
-    # 默认疑似中介 — 信息不足不做猜测
-    return "疑似中介", all_hits, meta
+    meta = {"hybrid_score": 3 if hits else 0, "regex_hits": hits}
+    return "疑似中介", hits, meta
 
 
 def is_sublet_from_content(content: str) -> bool:
@@ -256,57 +201,3 @@ def is_sublet_from_content(content: str) -> bool:
         "不是中介", "非中介",
     ]
     return any(kw in content for kw in sublet_keywords)
-
-
-def reevaluate_all(conn) -> dict:
-    """全库重新评估中介状态。利用已有数据做批量修正。
-
-    规则（入库后运行，有完整数据）：
-    1. 同 poster_id >= 3 条 → 全部标记为中介
-    2. 同 contact >= 2 条 → 全部标记为中介
-    3. poster_id 含中介名称关键词 → 标记为中介
-
-    返回 {"updated": int}
-    """
-    updated = 0
-
-    # R1: 同 poster >= 3 条（与 detect_with_llm 阈值一致，DISTINCT 去重防同一 URL 多次入库）
-    rows = conn.execute("""
-        SELECT poster_id FROM listings
-        WHERE poster_id IS NOT NULL AND poster_id != '' AND poster_id != 'None'
-        GROUP BY poster_id HAVING COUNT(DISTINCT source_url) >= 3
-    """).fetchall()
-    for (pid,) in rows:
-        cur = conn.execute(
-            "UPDATE listings SET landlord_type='中介' WHERE poster_id=? AND landlord_type!='中介'",
-            (pid,),
-        )
-        updated += cur.rowcount
-
-    # R2: 同 contact 多条（DISTINCT 去重）
-    rows = conn.execute("""
-        SELECT contact FROM listings
-        WHERE contact IS NOT NULL AND contact != ''
-        GROUP BY contact HAVING COUNT(DISTINCT source_url) >= 2
-    """).fetchall()
-    for (c,) in rows:
-        cur = conn.execute(
-            "UPDATE listings SET landlord_type='中介' WHERE contact=? AND landlord_type!='中介'",
-            (c,),
-        )
-        updated += cur.rowcount
-
-    # R3: poster_id 名称含中介关键词（参数化查询，排除"非中介"/"无中介"等反模式）
-    like_clauses = " OR ".join(["poster_id LIKE ?" for _ in AGENCY_NAME_PATTERNS])
-    like_params = [f"%{p}%" for p in AGENCY_NAME_PATTERNS]
-    # 排除明确声称非中介的用户（如 "我不是中介"、"无中介房源"）
-    exclude_clauses = " AND poster_id NOT LIKE ? AND poster_id NOT LIKE ?"
-    like_params.extend(["%非中介%", "%无中介%"])
-    cur = conn.execute(
-        f"UPDATE listings SET landlord_type='中介' WHERE ({like_clauses}){exclude_clauses} AND landlord_type!='中介'",
-        like_params
-    )
-    updated += cur.rowcount
-
-    conn.commit()
-    return {"updated": updated}

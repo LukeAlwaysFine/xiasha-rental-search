@@ -158,14 +158,6 @@ async def deep_dive_area(
 
         conn.commit()
 
-        # ——— 入库后批量重评中介 ———
-        from src.detector.agent_detector import reevaluate_all
-        try:
-            re_result = reevaluate_all(conn)
-            if re_result["updated"] > 0:
-                logger.info(f"deep_dive [{area_name}]: 中介重评修正 {re_result['updated']} 条")
-        except Exception as e:
-            logger.warning(f"deep_dive [{area_name}]: 中介重评失败: {e}")
     finally:
         conn.close()  # H1: 确保异常时也释放连接
 

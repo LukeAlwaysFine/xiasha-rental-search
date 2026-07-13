@@ -515,6 +515,7 @@ async def check_posters_for_agents(
                 SELECT poster_id, MIN(source_url) as sample_url
                 FROM listings
                 WHERE poster_id IS NOT NULL AND poster_id != '' AND poster_id != 'None'
+                  AND (poster_checked_at IS NULL OR poster_checked_at < datetime('now', '-24 hours'))
                 GROUP BY poster_id
                 HAVING COUNT(DISTINCT source_url) < 3
                 ORDER BY RANDOM()
@@ -603,65 +604,62 @@ async def check_posters_for_agents(
 
                 async with db_lock:
                     checked += 1
+                    # 确定 poster 检查结果
                     if _rental_count >= 3:
-                        found += 1
-                        logger.info(
-                            f"Poster check [{_poster}]: {_rental_count}/{_total_count} 套出租 → 中介"
-                        )
-                        _conn2 = _get_conn()
-                        try:
-                            _conn2.execute(
-                                "UPDATE listings SET landlord_type='中介' WHERE poster_id=? AND landlord_type!='中介'",
-                                (_poster,),
-                            )
-                            _conn2.commit()
-                        finally:
-                            _conn2.close()
+                        poster_result = "中介"
                     elif _rental_count >= 2:
-                        suspected += 1
-                        logger.info(
-                            f"Poster check [{_poster}]: {_rental_count}/{_total_count} 套出租 → 疑似中介"
-                        )
-                        _conn2 = _get_conn()
-                        try:
+                        poster_result = "疑似中介"
+                    elif _rental_count == 1:
+                        poster_result = "疑似中介" if _total_count == 1 else "个人"
+                    else:
+                        return  # 无出租房，跳过
+
+                    # 读取 pipeline 判定（detect_with_llm 的初始结果）
+                    _conn2 = _get_conn()
+                    try:
+                        row = _conn2.execute(
+                            "SELECT landlord_type FROM listings WHERE poster_id=? LIMIT 1",
+                            (_poster,),
+                        ).fetchone()
+                        pipeline_result = row[0] if row else "疑似中介"
+
+                        # 融合规则：Poster 决定性 + Pipeline 辅助
+                        if poster_result == "中介":
+                            final = "中介"
+                        elif poster_result == "疑似中介" and pipeline_result == "中介":
+                            final = "中介"       # pipeline 升级
+                        elif poster_result == "个人" and pipeline_result == "中介":
+                            final = "疑似中介"    # pipeline 拉低信任
+                        else:
+                            final = poster_result
+
+                        if final != pipeline_result:
                             _conn2.execute(
-                                "UPDATE listings SET landlord_type='疑似中介' WHERE poster_id=? AND landlord_type NOT IN ('中介','疑似中介')",
-                                (_poster,),
+                                "UPDATE listings SET landlord_type=? WHERE poster_id=? AND landlord_type!=?",
+                                (final, _poster, final),
                             )
                             _conn2.commit()
-                        finally:
-                            _conn2.close()
-                    elif _rental_count == 1:
-                        if _total_count == 1:
-                            # 只有一条房源且无其他物品 → 疑似中介
+
+                        # 记录检查时间。"个人"缓存 24h，"疑似中介"缓存 6h
+                        _cache_hours = 24 if final == "个人" else 6
+                        _conn2.execute(
+                            f"UPDATE listings SET poster_checked_at=datetime('now', '-{24 - _cache_hours} hours') WHERE poster_id=?",
+                            (_poster,),
+                        )
+                        _conn2.commit()
+
+                        if final == "中介":
+                            found += 1
+                        elif final == "疑似中介":
                             suspected += 1
-                            logger.info(
-                                f"Poster check [{_poster}]: 仅 1 条出租房且无其他物品 → 疑似中介"
-                            )
-                            _conn2 = _get_conn()
-                            try:
-                                _conn2.execute(
-                                    "UPDATE listings SET landlord_type='疑似中介' WHERE poster_id=? AND landlord_type NOT IN ('中介','疑似中介')",
-                                    (_poster,),
-                                )
-                                _conn2.commit()
-                            finally:
-                                _conn2.close()
                         else:
-                            # 有 1 条出租房 + 其他物品 → 个人
                             personal += 1
-                            logger.info(
-                                f"Poster check [{_poster}]: 1 条出租房 + {_total_count - 1} 件其他物品 → 个人"
-                            )
-                            _conn2 = _get_conn()
-                            try:
-                                _conn2.execute(
-                                    "UPDATE listings SET landlord_type='个人' WHERE poster_id=? AND landlord_type!='个人'",
-                                    (_poster,),
-                                )
-                                _conn2.commit()
-                            finally:
-                                _conn2.close()
+
+                        logger.info(
+                            f"Poster check [{_poster}]: poster={poster_result} pipeline={pipeline_result} → {final}"
+                        )
+                    finally:
+                        _conn2.close()
             except Exception:
                 async with db_lock:
                     checked += 1
