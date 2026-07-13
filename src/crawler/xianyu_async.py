@@ -490,13 +490,13 @@ async def check_posters_for_agents(
         headless: Playwright 是否 headless 模式。
 
     Returns:
-        {"found": int, "checked": int, "error": str | None}
+        {"found": int, "suspected": int, "personal": int, "checked": int, "total": int, "error": str | None}
     """
     import random
     from src.db.schema import get_conn as _get_conn
 
     if not has_valid_cookies():
-        return {"found": 0, "checked": 0, "total": 0, "error": "Cookies not ready — 请先执行 python -m src.crawler.xianyu_async --login"}
+        return {"found": 0, "suspected": 0, "personal": 0, "checked": 0, "total": 0, "error": "Cookies not ready — 请先执行 python -m src.crawler.xianyu_async --login"}
 
     # 解析要检查的 poster 列表
     _to_check: list[tuple[str, str]] = []  # [(poster_id, sample_url), ...]
@@ -525,16 +525,18 @@ async def check_posters_for_agents(
         _conn.close()
 
     if not _to_check:
-        return {"found": 0, "checked": 0, "total": 0, "error": None}
+        return {"found": 0, "suspected": 0, "personal": 0, "checked": 0, "total": 0, "error": None}
 
     # 加载 cookie 并启动浏览器
     try:
         cookies = json.loads(COOKIE_FILE.read_text(encoding="utf-8")).get("cookies", [])
     except Exception:
-        return {"found": 0, "checked": 0, "total": 0, "error": "Cookie 文件损坏"}
+        return {"found": 0, "suspected": 0, "personal": 0, "checked": 0, "total": 0, "error": "Cookie 文件损坏"}
 
     from playwright.async_api import async_playwright
     found = 0
+    suspected = 0
+    personal = 0
     checked = 0
     total = len(_to_check)
 
@@ -576,25 +578,29 @@ async def check_posters_for_agents(
                 await page.goto(_profile_url, wait_until="domcontentloaded", timeout=15000)
                 await page.wait_for_timeout(3000)
 
-                # Step 3: 数出租房（用 textContent 关键词匹配，排除普通商品）
-                _rental_count = await page.evaluate("""() => {
+                # Step 3: 数出租房和总物品数
+                _counts = await page.evaluate("""() => {
                     const links = document.querySelectorAll('a[href*="/item?id="]');
                     const seen = new Set();
                     const rentalKW = /\\/月|出租|租房|整租|合租|转租|单间|一室|两室|三室|1室|2室|3室|一居|两居|三居|㎡|平方|无中介|拎包|房东|民水|民电/;
-                    let count = 0;
+                    let rentalCount = 0;
+                    let totalCount = 0;
                     for (const a of links) {
                         const id = a.href.split('id=')[1]?.split('&')[0];
                         if (!id || seen.has(id)) continue;
                         seen.add(id);
-                        if (rentalKW.test(a.textContent || '')) count++;
+                        totalCount++;
+                        if (rentalKW.test(a.textContent || '')) rentalCount++;
                     }
-                    return count;
+                    return { rental: rentalCount, total: totalCount };
                 }""")
+                _rental_count = _counts.get("rental", 0)
+                _total_count = _counts.get("total", 0)
 
                 if _rental_count >= 3:
                     found += 1
                     logger.info(
-                        f"Poster check [{_poster}]: 主页有 {_rental_count} 套出租房 → 中介"
+                        f"Poster check [{_poster}]: {_rental_count}/{_total_count} 套出租 → 中介"
                     )
                     _conn2 = _get_conn()
                     try:
@@ -605,6 +611,51 @@ async def check_posters_for_agents(
                         _conn2.commit()
                     finally:
                         _conn2.close()
+                elif _rental_count >= 2:
+                    suspected += 1
+                    logger.info(
+                        f"Poster check [{_poster}]: {_rental_count}/{_total_count} 套出租 → 疑似中介"
+                    )
+                    _conn2 = _get_conn()
+                    try:
+                        _conn2.execute(
+                            "UPDATE listings SET landlord_type='未知' WHERE poster_id=? AND landlord_type NOT IN ('中介','未知')",
+                            (_poster,),
+                        )
+                        _conn2.commit()
+                    finally:
+                        _conn2.close()
+                elif _rental_count == 1:
+                    if _total_count == 1:
+                        # 只有一条房源且无其他物品 → 疑似中介
+                        suspected += 1
+                        logger.info(
+                            f"Poster check [{_poster}]: 仅 1 条出租房且无其他物品 → 疑似中介"
+                        )
+                        _conn2 = _get_conn()
+                        try:
+                            _conn2.execute(
+                                "UPDATE listings SET landlord_type='未知' WHERE poster_id=? AND landlord_type NOT IN ('中介','未知')",
+                                (_poster,),
+                            )
+                            _conn2.commit()
+                        finally:
+                            _conn2.close()
+                    else:
+                        # 有 1 条出租房 + 其他物品 → 个人
+                        personal += 1
+                        logger.info(
+                            f"Poster check [{_poster}]: 1 条出租房 + {_total_count - 1} 件其他物品 → 个人"
+                        )
+                        _conn2 = _get_conn()
+                        try:
+                            _conn2.execute(
+                                "UPDATE listings SET landlord_type='个人' WHERE poster_id=? AND landlord_type!='个人'",
+                                (_poster,),
+                            )
+                            _conn2.commit()
+                        finally:
+                            _conn2.close()
 
                 # 随机延迟，减轻反爬压力
                 await page.wait_for_timeout(random.randint(1000, 3000))
@@ -614,7 +665,7 @@ async def check_posters_for_agents(
         await page.close()
         await browser.close()
 
-    return {"found": found, "checked": checked, "total": total, "error": None}
+    return {"found": found, "suspected": suspected, "personal": personal, "checked": checked, "total": total, "error": None}
 
 
 async def _enrich_via_new_tabs(items: list[dict], context, max_concurrent: int = 5):

@@ -1,5 +1,77 @@
 # Bug 记录与修复
 
+## 2026-07-13：Poster 检查规则细化 — 利用总物品数区分个人/中介
+
+### 现象
+
+单条出租房 poster 全部跳过不处理。真实个人（一条房+多条闲置物品）和单房中介（只发一条房，无其他物品）无法区分。
+
+### 修复
+
+**四档判定规则**（`check_posters_for_agents()`）：
+
+| 出租房数 | 其他物品 | 判定 | DB 标记 |
+|:--:|:--:|:--:|:--:|
+| ≥3 | 不限 | 中介 | `landlord_type='中介'` |
+| =2 | 不限 | 疑似中介 | `landlord_type='未知'` |
+| =1 | 无 | 疑似中介 | `landlord_type='未知'` |
+| =1 | 有 | 个人 | `landlord_type='个人'` |
+| =0 | 不限 | 不处理 | 保持原样 |
+
+- Playwright JS 改为返回 `{rental, total}` 两字段，不再只数出租房
+- 新增 `personal` 计数器，状态栏显示"发现 X 个中介 + Y 个疑似 + Z 个个人"
+
+### 涉及文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/crawler/xianyu_async.py` | Step 3 JS 改为返回 `{rental, total}`；新增四档判定逻辑 + `personal` 计数 |
+| `src/api/server.py` | `_poster_check_status` 新增 `personal` 字段；端点透传 |
+| `src/web/index.html` | `_setLastPosterCheck` 签名 +1；状态栏显示个人数；toast 消息同步 |
+
+## 2026-07-13：高德 inputtips API 月度配额超限 — 三层省配额策略
+
+### 现象
+
+高德控制台显示"输入提示"（`assistant/inputtips`）用量 5021/5000，超过月度免费额度。地址搜索自动补全功能不可用。
+
+### 根因
+
+两个调用点合计超过 5000/月：
+
+1. **前端地址自动补全**（`/api/inputtips`）：每次在通勤参考点输入框打字，250ms 防抖后调用高德 API。同一个地址（如"金沙湖地铁站"）多次输入会产生重复调用。
+2. **geocode 兜底策略**（`geocode()` 策略2）：地理编码失败时回退到 inputtips，`batch_geocode_missing()` 批量补齐会大量触发。
+
+### 修复
+
+**三层省配额策略**：
+
+1. **前端本地匹配优先**（`index.html`）：
+   - localStorage 历史记录存储上限 10 → 200（显示仍为 10 条）
+   - 输入时先在全部 200 条历史中模糊匹配，命中直接显示，**0 次 API 调用**
+   - 本地命中后仍静默调 API 补充新结果，合并显示（本地 + API 去重）
+   - 修复本地匹配索引 bug：用 `data-addr` 存实际地址值而非数组索引
+
+2. **服务端 24h 内存缓存**（`server.py`）：
+   - `_inputtips_cache`：max 5000 条，TTL 86400s
+   - 相同关键词 24h 内命中缓存 → 0 次 API 调用
+   - 缓存满时清理过期 → 淘汰最旧 10%
+   - 高德 API 故障时降级返回过期缓存
+   - 移除 `datatype="poi"` 参数（可能导致归类为 POI 搜索）
+   - 最小关键词长度 ≥2
+
+3. **geocode 兜底每日上限**（`amap.py`）：
+   - 每日计数器，geocode 的 inputtips 兜底最多 **30 次/天**（~900/月）
+   - 超出后跳过策略2直接返回 `None`
+
+### 涉及文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `src/api/server.py` | 新增 `_inputtips_cache` 24h 缓存 + 过期降级 + 移除 `datatype=poi` |
+| `src/geocode/amap.py` | 新增 `_tips_call_count` 每日计数器（30/天上限） |
+| `src/web/index.html` | 存储 200 条历史 + 输入本地匹配优先 + `_fetchTipsFromAPI` 异步补充 + 索引 bug 修复 |
+
 ## 2026-07-12：关键词矩阵优化 — 聚焦下沙、扩大覆盖
 
 ### 现象

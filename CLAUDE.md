@@ -37,7 +37,7 @@ export LD_LIBRARY_PATH=/tmp/chromium-libs/lib:$LD_LIBRARY_PATH  # 容器 Chromiu
 
 - **抓取**: Playwright（闲鱼 MTOP 拦截 + 微博 Ajax）+ httpx + BS4（豆瓣 SSR 直连）
 - **提取**: DeepSeek V4 Flash（AsyncOpenAI，thinking=disabled，40 并发）
-- **地理编码**: 高德 API 多策略重试 + Input Tips 回退；批量补齐（地址去重 + 2并发 + write_lock）。候选地址只追加命中区名，避免 9 区盲目遍历。闲鱼 MTOP 自带 GPS 覆盖 99.8%
+- **地理编码**: 高德 API 多策略重试 + Input Tips 兜底（每日上限 30 次，月配额仅 5000）；批量补齐（地址去重 + 2并发 + write_lock）。候选地址只追加命中区名，避免 9 区盲目遍历。闲鱼 MTOP 自带 GPS 覆盖 99.8%
 - **数据库**: SQLite WAL 模式，UPSERT 零值覆盖保护（`CASE WHEN IS NULL OR = 0`）。favorites 表 FK 关联 listings，级联删除。
 - **后端**: FastAPI + APScheduler（6h URL 清理 + 6h poster 主页检测 + 1h 中介重评（纯SQL））。抓取手动触发（🔄 / 🔍 按钮 → 状态栏进度），抓取成功后自动链式执行中介检查
 - **前端**: 单页 HTML + 高德 JS API 2.0 + taste-skill 设计体系。收藏按钮（圆形 ♥）乐观更新 + API 同步，头部"我的收藏"入口。
@@ -49,7 +49,7 @@ export LD_LIBRARY_PATH=/tmp/chromium-libs/lib:$LD_LIBRARY_PATH  # 容器 Chromiu
 → AsyncOpenAI 并行提取（40并发，is_rental 默认 false）
 → API 坐标优先（闲鱼 MTOP 6 路径探测）→ 高德 geocode 兜底
 → LLM+Regex 混合中介检测 → 入库 → batch_geocode_missing + reevaluate_all（1h SQL 批量修正）
-→ poster 主页检测（6h，Playwright 进闲鱼主页数出租房，≥3 标中介）
+→ poster 主页检测（6h，Playwright 进闲鱼主页数出租房+总物品数，四档判定）
 → LLM 重排/去重 → 前端地图（全量 markers ≤1000）+ 列表（50条分页）
 → 抓取成功后自动链式 poster 检查（新增>0时触发，2s延迟）
 ```
@@ -71,7 +71,7 @@ LLM 提取时同步分析 agent_signals/confidence/reasoning（零额外调用�
 - 模板标题正则：纯结构描述+无个人语言 → 至少"未知"（不强制要求面积，匹配含"两室"等标题）
 - 判定：≥6 中介 / 3-5 未知 / <3 个人
 - 入库后 `reevaluate_all()` 每小时批量修正（纯 SQL）：同 poster ≥3 / 同 contact ≥2 / 名称 LIKE
-- 独立定时任务（6h）：Playwright 进闲鱼主页数出租房，≥3 标中介，前端按钮手动触发
+- 独立定时任务（6h）：Playwright 进闲鱼主页数出租房+总物品数。判定：≥3出租→中介，2出租→疑似，1出租+无其他物品→疑似，1出租+有其他物品→个人。前端按钮手动触发
 
 ### 数据入库管线
 
@@ -113,7 +113,7 @@ src/
   detector/      agent_detector.py   # R3 参数化 LIKE + 反模式排除
   filter/        llm_rerank.py / llm_dedup.py
   db/            schema.py           # 三级降级 + UPSERT 零值覆盖
-  api/           server.py           # 速率限制+threading.Lock + 缓存 mtime 刷新
+  api/           server.py           # 速率限制+threading.Lock + inputtips缓存 + 缓存 mtime 刷新
   web/           index.html          # escapeHtml 控制字符剥离 + 状态栏竞态防护 + 详情抽屉面板
 .claude/agents/  qa-team / *-tester / code-reviewer / e2e-tester
 ```
@@ -135,7 +135,7 @@ taste-skill 体系：珊瑚红 `#ff6b6b`，深蓝灰 `#1a1a2e`。Geist 字体。
 - 所有筛选点击即搜索（300ms debounce，搜索按钮立即触发）；芯片 `data-group` 分组匹配；无坐标房源 SQL `CASE WHEN lng IS NULL THEN 1` 排最后
 - 骨架屏加载：3 个脉冲动画骨架卡片替代 spinner，数据返回后替换
 - Toast 通知：右上角 `success`/`error`/`info`，3s 自动消失。收藏/定位反馈已接入
-- 地址搜索：`/api/inputtips` 下拉 + localStorage 最近 10 条历史（可逐条 ✕ 删除，保存高德返回的实际地址名而非用户输入文字）。输入框内 ✕ 清除按钮
+- 地址搜索：`/api/inputtips` 下拉 + localStorage 历史（存储 200 条，显示 10 条，输入时优先本地匹配省 API）。可逐条 ✕ 删除，保存高德返回的实际地址名。输入框内 ✕ 清除按钮；服务端 24h 缓存 + 过期降级兜底
 - 筛选面板：一键清除筛选按钮 + `grid-template-rows` 折叠动画 + 折叠状态 localStorage 记忆
 - 移动端 (<900px)：浮动 🗺️/📋 按钮切换全屏地图/列表
 - 地图：初始聚焦下沙 `[120.38, 30.31]` zoom 15；全量 markers（≤1000）网格聚类（~16m）；6 层暖→冷六色渐变距离圈（200m-5km）；AMap.Scale 比例尺；金色参考标记（📍）；距离模式 zoom 14 聚焦通勤点

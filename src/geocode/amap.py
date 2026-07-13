@@ -1,10 +1,16 @@
 """高德地图 API 封装 — 地址 → 经纬度"""
 
 import os
+import time
 from src.http_client import get_http_client
 
 AMAP_KEY = os.getenv("AMAP_API_KEY", "")
 GEOCODE_URL = "https://restapi.amap.com/v3/geocode/geo"
+
+# —— geocode inputtips 兜底每日上限（免费额度 5000/日，留给前端自动补全用） ——
+_tips_call_count = 0
+_tips_call_date = ""
+_TIPS_DAILY_MAX = 30  # geocode 兜底每天最多 30 次（月配额仅 5000）
 
 
 async def geocode(address: str, city: str = "杭州") -> tuple[float, float] | None:
@@ -53,8 +59,16 @@ async def geocode(address: str, city: str = "杭州") -> tuple[float, float] | N
             lng_str, lat_str = loc.split(",")
             return float(lng_str), float(lat_str)
 
-    # —— 策略 2: Input Tips API 兜底 ——
+    # —— 策略 2: Input Tips API 兜底（每日上限保护） ——
     # 用短关键词查 Input Tips，拿到完整地址或直接获得坐标
+    today = time.strftime("%Y-%m-%d")
+    global _tips_call_count, _tips_call_date
+    if _tips_call_date != today:
+        _tips_call_count = 0
+        _tips_call_date = today
+    if _tips_call_count >= _TIPS_DAILY_MAX:
+        return None  # 达到每日上限，跳过 inputtips 兜底
+
     short = address
     for prefix in ["浙江", "浙江省", "杭州"]:
         if short.startswith(prefix):
@@ -69,6 +83,7 @@ async def geocode(address: str, city: str = "杭州") -> tuple[float, float] | N
             "city": city,
             "citylimit": "true",
         })
+        _tips_call_count += 1  # 计入每日配额
         tips_data = tips_resp.json()
         if tips_data.get("status") == "1":
             for tip in tips_data.get("tips", [])[:3]:

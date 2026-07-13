@@ -2351,26 +2351,29 @@ async function triggerPosterCheck() {
     if (_posterCheckPollId) { clearTimeout(_posterCheckPollId); _posterCheckPollId = null; }
     var pd = await pr.json();
     if (pr.ok && pd.found !== undefined) {
-      _setLastPosterCheck(pd.found, pd.checked, '', (Date.now() - _pcStartTs) / 1000);
+      _setLastPosterCheck(pd.found, pd.suspected || 0, pd.personal || 0, pd.checked, '', (Date.now() - _pcStartTs) / 1000);
       if (fb) { fb.innerHTML = '✅ 检查完成 · 发现 ' + pd.found + ' 个中介 · 正在刷新...'; }
-      showToast('发现 ' + pd.found + ' 个中介', 'success');
+      var toastMsg = '发现 ' + pd.found + ' 个中介';
+      if (pd.suspected > 0) toastMsg += ' + ' + pd.suspected + ' 个疑似';
+      if (pd.personal > 0) toastMsg += ' + ' + pd.personal + ' 个个人';
+      showToast(toastMsg, 'success');
       setTimeout(function() { search(true); }, 800);
     } else {
       var errMsg = pd.error || '检测失败';
-      _setLastPosterCheck(0, 0, errMsg, (Date.now() - _pcStartTs) / 1000);
+      _setLastPosterCheck(0, 0, 0, 0, errMsg, (Date.now() - _pcStartTs) / 1000);
       if (fb) { fb.innerHTML = '⚠️ ' + errMsg; }
       showToast(errMsg, 'error');
     }
   } catch(e) {
     if (_posterCheckPollId) { clearTimeout(_posterCheckPollId); _posterCheckPollId = null; }
-    _setLastPosterCheck(0, 0, '网络请求失败', (Date.now() - _pcStartTs) / 1000);
+    _setLastPosterCheck(0, 0, 0, 0, '网络请求失败', (Date.now() - _pcStartTs) / 1000);
     if (fb) { fb.innerHTML = '⚠️ 请求失败，请检查网络'; }
     console.error('Poster check error:', e);
   }
 
   _posterCheckRunning = false;
   if (btn) { btn.textContent = origText; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
-  _updatePosterCheckLabel();
+  _resetPosterCheckBtn();
   setTimeout(function() {
     if (fb && !_posterCheckPollId && _posterCheckRunning === false) {
       fb.style.display = 'none';
@@ -2387,11 +2390,11 @@ function _checkOngoingPosterCheck() {
       var _pcRecDuration = (s.finished_at && s.started_at) ? (s.finished_at - s.started_at) : 0;
       if (!s.running && s.finished_at) {
         _lastPosterCheckAt = s.finished_at;
-        _updatePosterCheckLabel();
+        _resetPosterCheckBtn();
         if (!s.error) {
-          _setLastPosterCheck(s.found || 0, s.checked || 0, '', _pcRecDuration);
+          _setLastPosterCheck(s.found || 0, s.suspected || 0, s.personal || 0, s.checked || 0, '', _pcRecDuration);
         } else {
-          _setLastPosterCheck(0, 0, s.error, _pcRecDuration);
+          _setLastPosterCheck(0, 0, 0, 0, s.error, _pcRecDuration);
         }
       }
       if (!s.running) return;
@@ -2410,15 +2413,14 @@ function _checkOngoingPosterCheck() {
             if (!_posterCheckRunning) return;
             if (!s2.running) {
               _posterCheckRunning = false;
-              _setLastPosterCheck(s2.found || 0, s2.checked || 0);
               if (btn) { btn.textContent = '🔍 检查是否中介'; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
               if (fb) {
                 var _pcd2 = (s2.finished_at && s2.started_at) ? (s2.finished_at - s2.started_at) : 0;
                 if (s2.error) {
-                  _setLastPosterCheck(0, 0, s2.error || '检测失败', _pcd2);
+                  _setLastPosterCheck(0, 0, 0, 0, s2.error || '检测失败', _pcd2);
                   fb.innerHTML = '⚠️ ' + (s2.error || '检测失败');
                 } else {
-                  _setLastPosterCheck(s2.found || 0, s2.checked || 0, '', _pcd2);
+                  _setLastPosterCheck(s2.found || 0, s2.suspected || 0, s2.personal || 0, s2.checked || 0, '', _pcd2);
                   fb.innerHTML = '✅ 检查完成 · 发现 ' + (s2.found || 0) + ' 个中介 · 正在刷新...';
                 }
               }
@@ -2442,20 +2444,9 @@ function _checkOngoingPosterCheck() {
     }).catch(function() { });
 }
 
-function _updatePosterCheckLabel() {
+function _resetPosterCheckBtn() {
   var btn = document.getElementById('posterCheckBtn');
-  if (!btn || _posterCheckRunning) return;
-  var at = _lastPosterCheckAt;
-  // 从 localStorage 回填
-  if (!at) {
-    var s = _loadOpsStatus();
-    if (s.lastPosterCheckAt) { at = s.lastPosterCheckAt / 1000; _lastPosterCheckAt = at; }
-  }
-  if (at) {
-    var diff = Math.floor((Date.now() / 1000) - at);
-    var label = diff < 60 ? '刚刚' : (diff < 3600 ? Math.floor(diff / 60) + '分钟前' : Math.floor(diff / 3600) + '小时前');
-    btn.textContent = '🔍 检查是否中介 (' + label + ')';
-  }
+  if (btn && !_posterCheckRunning) { btn.textContent = '🔍 检查是否中介'; }
 }
 
 // ——— 操作状态栏（持久化，页面顶部） ———
@@ -2477,17 +2468,19 @@ function _setLastFetch(count, error, duration) {
   _updateOpsStatus();
 }
 
-function _setLastPosterCheck(found, checked, error, duration) {
+function _setLastPosterCheck(found, suspected, personal, checked, error, duration) {
   var s = _loadOpsStatus();
   s.lastPosterCheckAt = Date.now();
   s.lastPosterCheckFound = found || 0;
+  s.lastPosterCheckSuspected = suspected || 0;
+  s.lastPosterCheckPersonal = personal || 0;
   s.lastPosterCheckChecked = checked || 0;
   s.lastPosterCheckError = error || '';
   s.lastPosterCheckDuration = duration || 0;
   _saveOpsStatus(s);
   _updateOpsStatus();
   _lastPosterCheckAt = s.lastPosterCheckAt / 1000;
-  _updatePosterCheckLabel();
+  _resetPosterCheckBtn();
 }
 
 function _timeAgo(ts) {
@@ -2523,8 +2516,12 @@ function _updateOpsStatus() {
     var text = icon + ' 上次检查: ' + _timeAgo(s.lastPosterCheckAt);
     if (s.lastPosterCheckError) {
       text += ' · ' + escapeHtml(s.lastPosterCheckError);
-    } else if (s.lastPosterCheckFound > 0) {
-      text += ' · 发现 ' + s.lastPosterCheckFound + ' 个中介';
+    } else {
+      var parts2 = [];
+      if (s.lastPosterCheckFound > 0) parts2.push(s.lastPosterCheckFound + ' 个中介');
+      if (s.lastPosterCheckSuspected > 0) parts2.push(s.lastPosterCheckSuspected + ' 个疑似');
+      if (s.lastPosterCheckPersonal > 0) parts2.push(s.lastPosterCheckPersonal + ' 个个人');
+      if (parts2.length > 0) text += ' · 发现 ' + parts2.join(' + ');
     }
     if (s.lastPosterCheckDuration > 0) {
       text += ' · 耗时 ' + _secToStr(Math.round(s.lastPosterCheckDuration));
@@ -2637,13 +2634,24 @@ function quickSearch(area) {
 // ——— 地址自动补全 ———
 var _commuteTimer = null, _commuteIdx = -1, _tipsCache = [];
 var _HIST_KEY = 'addr_history';
+var _HIST_DISPLAY = 10;   // 下拉最多显示条数
+var _HIST_STORE = 200;    // 本地存储上限（提高本地匹配命中率，省 API）
 function _getHistory() { try { return JSON.parse(localStorage.getItem(_HIST_KEY) || '[]'); } catch(e) { return []; } }
 function _saveHistory(addr) {
   if (!addr || !addr.trim()) return;
   var h = _getHistory().filter(function(a) { return a !== addr; });
   h.unshift(addr);
-  if (h.length > 10) h.length = 10;
+  if (h.length > _HIST_STORE) h.length = _HIST_STORE;
   localStorage.setItem(_HIST_KEY, JSON.stringify(h));
+}
+function _fetchTipsFromAPI(keyword, callback) {
+  fetch('/api/inputtips?keywords=' + encodeURIComponent(keyword))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      _tipsCache = data.tips || [];
+      callback(_tipsCache);
+    })
+    .catch(function() { callback([]); });
 }
 function setupCommuteAutocomplete() {
   var input = document.getElementById('commute_ref');
@@ -2669,8 +2677,9 @@ function setupCommuteAutocomplete() {
     _commuteIdx = -1;
     _tipsCache = [];
     if (!hist.length) { dropdown.innerHTML = ''; dropdown.classList.remove('show'); return; }
+    var display = hist.slice(0, _HIST_DISPLAY);  // 显示 10 条，存储 200 条
     var html = '<div class="tip-item" style="color:var(--text-muted);font-size:11px;cursor:default;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center">最近搜索</div>';
-    hist.forEach(function(a, i) {
+    display.forEach(function(a, i) {
       html += '<div class="tip-item" data-history="' + i + '" style="display:flex;justify-content:space-between;align-items:center">'
         + '<div class="tip-name" style="flex:1">🕐 ' + escapeHtml(a) + '</div>'
         + '<button class="hist-del-btn" data-hist-idx="' + i + '" title="删除" style="flex-shrink:0;width:24px;height:24px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:16px;line-height:1;border-radius:50%;transition:all var(--transition);display:flex;align-items:center;justify-content:center" onmouseenter="this.style.background=\'rgba(255,107,107,.15)\';this.style.color=\'var(--accent)\'" onmouseleave="this.style.background=\'transparent\';this.style.color=\'var(--text-muted)\'">✕</button>'
@@ -2700,14 +2709,50 @@ function setupCommuteAutocomplete() {
     var val = input.value.trim();
     if (!val) { _showHistory(); return; }
     _commuteTimer = setTimeout(async function() {
-      try {
-        var resp = await fetch('/api/inputtips?keywords=' + encodeURIComponent(val));
-        var data = await resp.json();
-        _tipsCache = data.tips || [];
-        if (!_tipsCache.length) { hideDropdown(); return; }
+      // —— 先在本地历史中匹配，省去 API 调用 ——
+      var hist = _getHistory();
+      var localMatches = hist.filter(function(a) {
+        return a.toLowerCase().indexOf(val.toLowerCase()) !== -1;
+      });
+      if (localMatches.length > 0) {
+        // 本地命中，显示匹配结果（最多 10 条），不调 API
         _commuteIdx = -1;
+        _tipsCache = [];
+        var displayMatches = localMatches.slice(0, _HIST_DISPLAY);
+        var html = '<div class="tip-item" style="color:var(--text-muted);font-size:11px;cursor:default;border-bottom:1px solid #f0f0f0">本地历史</div>';
+        displayMatches.forEach(function(a, i) {
+          html += '<div class="tip-item" data-addr="' + escapeAttr(a) + '" data-local="1" style="display:flex;justify-content:space-between;align-items:center">'
+            + '<div class="tip-name" style="flex:1">🕐 ' + escapeHtml(a) + '</div>'
+            + '</div>';
+        });
+        // 继续查 API 补充更多结果（后台静默，不阻塞本地结果显示）
+        dropdown.innerHTML = html;
+        dropdown.classList.add('show');
+        _fetchTipsFromAPI(val, function(apiTips) {
+          if (!apiTips.length) return;
+          // 合并：本地结果 + API 结果（去重）
+          var merged = html;
+          var seenNames = new Set(localMatches.map(function(a) { return a.toLowerCase(); }));
+          var newTips = apiTips.filter(function(t) { return !seenNames.has(t.name.toLowerCase()); });
+          if (newTips.length > 0) {
+            merged += '<div class="tip-item" style="color:var(--text-muted);font-size:11px;cursor:default;border-bottom:1px solid #f0f0f0;margin-top:4px">搜索建议</div>';
+            newTips.forEach(function(t) {
+              merged += '<div class="tip-item" data-idx="' + _tipsCache.indexOf(t) + '" data-api="1">'
+                + '<div class="tip-name">' + escapeHtml(t.name) + '</div>'
+                + (t.district ? '<div class="tip-district">' + escapeHtml(t.district) + (t.address ? ' · ' + escapeHtml(t.address) : '') + '</div>' : '')
+                + '</div>';
+            });
+          }
+          dropdown.innerHTML = merged;
+        });
+        return;
+      }
+      // 本地无匹配，调 API
+      _fetchTipsFromAPI(val, function(tips) {
+        _commuteIdx = -1;
+        if (!tips.length) { hideDropdown(); return; }
         var html = '';
-        _tipsCache.forEach(function(t, i) {
+        tips.forEach(function(t, i) {
           html += '<div class="tip-item" data-idx="' + i + '">'
             + '<div class="tip-name">' + escapeHtml(t.name) + '</div>'
             + (t.district ? '<div class="tip-district">' + escapeHtml(t.district) + (t.address ? ' · ' + escapeHtml(t.address) : '') + '</div>' : '')
@@ -2715,7 +2760,7 @@ function setupCommuteAutocomplete() {
         });
         dropdown.innerHTML = html;
         dropdown.classList.add('show');
-      } catch(e) { hideDropdown(); }
+      });
     }, 250);
   });
 
@@ -2728,12 +2773,21 @@ function setupCommuteAutocomplete() {
       e.preventDefault();
       if (_commuteIdx >= 0) {
         var item = items[_commuteIdx];
+        // 跳过标题行（不可点击的提示文字如"本地历史""搜索建议"）
+        if (item.style && item.style.cursor === 'default') { hideDropdown(); setCommuteRef(); return; }
         var histIdx = item.getAttribute('data-history');
-        if (histIdx !== null) {
-          var addr = _getHistory()[parseInt(histIdx)];
-          if (addr) { input.value = addr; input.parentElement.classList.add('has-value'); hideDropdown(); setCommuteRef(); }
-        } else if (_tipsCache[_commuteIdx]) {
-          selectTip(_tipsCache[_commuteIdx]);
+        var apiIdx = item.getAttribute('data-idx');
+        var isLocal = item.getAttribute('data-local');
+        if (isLocal) {
+          // 本地历史记录命中（输入时匹配）— 直接用存储的地址值
+          var addrVal = item.getAttribute('data-addr');
+          if (addrVal) { input.value = addrVal; input.parentElement.classList.add('has-value'); hideDropdown(); setCommuteRef(); }
+        } else if (apiIdx !== null && _tipsCache[parseInt(apiIdx)]) {
+          selectTip(_tipsCache[parseInt(apiIdx)]);
+        } else if (histIdx !== null) {
+          // 纯历史记录（空输入时）
+          var addr2 = _getHistory()[parseInt(histIdx)];
+          if (addr2) { input.value = addr2; input.parentElement.classList.add('has-value'); hideDropdown(); setCommuteRef(); }
         }
       } else {
         // M5: 无高亮项时仍执行搜索（用户手动输入文本）
@@ -2759,7 +2813,16 @@ function setupCommuteAutocomplete() {
 
     var item = e.target.closest('.tip-item');
     if (!item) return;
-    // 历史记录点击
+    // 本地历史记录点击（data-addr 存的是实际地址值）
+    var localAddr = item.getAttribute('data-addr');
+    if (localAddr) {
+      input.value = localAddr;
+      input.parentElement.classList.add('has-value');
+      hideDropdown();
+      setCommuteRef();  // geocode + search
+      return;
+    }
+    // 历史记录点击（data-history 存的是完整数组索引）
     var histIdx = item.getAttribute('data-history');
     if (histIdx !== null) {
       var addr = _getHistory()[parseInt(histIdx)];
@@ -2907,7 +2970,6 @@ window.onload = function() {
   _checkOngoingFetch();
   _checkOngoingPosterCheck();
   _updateOpsStatus();
-  setInterval(_updatePosterCheckLabel, 30000);
   search(true);
 };
 

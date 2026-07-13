@@ -92,6 +92,12 @@ _RATE_MAX_IMPORT = int(os.getenv("RATE_MAX_IMPORT", "2"))     # /api/import: 2 r
 _RATE_MAX_FETCH = int(os.getenv("RATE_MAX_FETCH", "2"))       # /api/fetch: 2 req/min
 _RATE_MAX_POSTER_CHECK = int(os.getenv("RATE_MAX_POSTER_CHECK", "1"))  # /api/poster-check: 1 req/min
 
+# ——— Input Tips 缓存（减少高德 API 调用，免费额度仅 5000/日）———
+_inputtips_cache: dict[str, tuple[float, list[dict]]] = {}
+_inputtips_cache_lock = threading.Lock()
+_INPUTTIPS_CACHE_TTL = 86400  # 24h，地址提示结果稳定无需频繁刷新
+_INPUTTIPS_CACHE_MAX = 5000   # 最多缓存 5000 个不同关键词
+
 
 def _check_rate_limit(ip: str, max_req: int, endpoint: str = "search") -> bool:
     """返回 True 表示允许，False 表示限流。按 endpoint 分离桶。"""
@@ -165,7 +171,7 @@ async def _cleanup_enhance_cache():
 _fetch_status = {"running": False, "new_count": 0, "started_at": None, "finished_at": None, "error": None, "stage": "", "stage_started_at": None, "stage_times": [], "total_stages": 7}
 
 # ——— Poster 中介检查状态 ———
-_poster_check_status = {"running": False, "found": 0, "checked": 0, "total": 0, "started_at": None, "finished_at": None, "error": None}
+_poster_check_status = {"running": False, "found": 0, "suspected": 0, "personal": 0, "checked": 0, "total": 0, "started_at": None, "finished_at": None, "error": None}
 
 # ——— 定时任务 ———
 scheduler = AsyncIOScheduler()
@@ -194,7 +200,7 @@ async def scheduled_poster_check():
         result = await check_posters_for_agents(headless=True)
         logger.info(
             f"scheduled_poster_check: 检查 {result['checked']} 个发帖人, "
-            f"发现 {result['found']} 个中介"
+            f"发现 {result['found']} 个中介, {result['suspected']} 个疑似, {result['personal']} 个个人"
         )
     except Exception as e:
         logger.error(f"scheduled_poster_check: 失败: {e}", exc_info=True)
@@ -479,7 +485,19 @@ async def geocode_address(address: str = Query(..., description="地址文本"))
 
 @app.get("/api/inputtips")
 async def input_tips(keywords: str = Query(..., description="搜索关键词")):
-    """高德输入提示 — 地址自动补全下拉菜单。"""
+    """高德输入提示 — 地址自动补全下拉菜单。带 24h 缓存减少 API 调用。"""
+    # 过短关键词不查（也防止缓存被单字符垃圾撑满）
+    kw = keywords.strip()
+    if len(kw) < 2:
+        return {"tips": []}
+
+    # —— 查缓存 ——
+    now = time.time()
+    with _inputtips_cache_lock:
+        cached = _inputtips_cache.get(kw)
+        if cached and (now - cached[0]) < _INPUTTIPS_CACHE_TTL:
+            return {"tips": cached[1], "cached": True}
+
     import httpx
     try:
         async with httpx.AsyncClient() as client:
@@ -487,10 +505,9 @@ async def input_tips(keywords: str = Query(..., description="搜索关键词")):
                 "https://restapi.amap.com/v3/assistant/inputtips",
                 params={
                     "key": os.getenv("AMAP_API_KEY", ""),
-                    "keywords": keywords,
+                    "keywords": kw,
                     "city": "杭州",
                     "citylimit": "true",
-                    "datatype": "poi",
                 },
                 timeout=5.0,
             )
@@ -513,10 +530,28 @@ async def input_tips(keywords: str = Query(..., description="搜索关键词")):
                         "lng": lng,
                         "lat": lat,
                     })
+                # —— 写入缓存（限制大小，避免内存泄漏）——
+                with _inputtips_cache_lock:
+                    if len(_inputtips_cache) >= _INPUTTIPS_CACHE_MAX:
+                        # 清理过期的缓存条目
+                        expired = [k for k, v in _inputtips_cache.items() if (now - v[0]) >= _INPUTTIPS_CACHE_TTL]
+                        for k in expired:
+                            del _inputtips_cache[k]
+                        # 如果还是满的，随机清理 10% 最旧的
+                        if len(_inputtips_cache) >= _INPUTTIPS_CACHE_MAX:
+                            sorted_keys = sorted(_inputtips_cache.keys(), key=lambda k: _inputtips_cache[k][0])
+                            for k in sorted_keys[: max(1, len(sorted_keys) // 10)]:
+                                del _inputtips_cache[k]
+                    _inputtips_cache[kw] = (now, tips)
                 return {"tips": tips}
             return {"tips": []}
     except Exception as e:
-        logger.warning(f"inputtips failed for '{keywords[:80]}': {e}")
+        logger.warning(f"inputtips failed for '{kw[:80]}': {e}")
+        # 高德 API 失败时，尝试返回过期缓存作为降级
+        with _inputtips_cache_lock:
+            cached = _inputtips_cache.get(kw)
+            if cached:
+                return {"tips": cached[1], "cached": True, "stale": True}
         return JSONResponse({"tips": [], "error": "地址提示服务暂不可用"}, status_code=503)
 
 
@@ -697,7 +732,7 @@ async def trigger_poster_check(request: Request):
         return JSONResponse({"error": "请求过于频繁，请稍后再试"}, status_code=429)
 
     _poster_check_status = {
-        "running": True, "found": 0, "checked": 0, "total": 0,
+        "running": True, "found": 0, "suspected": 0, "personal": 0, "checked": 0, "total": 0,
         "started_at": time.time(), "finished_at": None, "error": None,
     }
 
@@ -706,11 +741,13 @@ async def trigger_poster_check(request: Request):
         result = await check_posters_for_agents(headless=True)
         _poster_check_status["running"] = False
         _poster_check_status["found"] = result.get("found", 0)
+        _poster_check_status["suspected"] = result.get("suspected", 0)
+        _poster_check_status["personal"] = result.get("personal", 0)
         _poster_check_status["checked"] = result.get("checked", 0)
         _poster_check_status["total"] = result.get("total", 0)
         _poster_check_status["finished_at"] = time.time()
         _poster_check_status["error"] = result.get("error")
-        return {"found": result.get("found", 0), "checked": result.get("checked", 0), "total": result.get("total", 0)}
+        return {"found": result.get("found", 0), "suspected": result.get("suspected", 0), "personal": result.get("personal", 0), "checked": result.get("checked", 0), "total": result.get("total", 0)}
     except Exception as e:
         _poster_check_status["running"] = False
         _poster_check_status["finished_at"] = time.time()
@@ -725,6 +762,8 @@ async def poster_check_status():
     return {
         "running": _poster_check_status["running"],
         "found": _poster_check_status["found"],
+        "suspected": _poster_check_status["suspected"],
+        "personal": _poster_check_status["personal"],
         "checked": _poster_check_status["checked"],
         "total": _poster_check_status["total"],
         "started_at": _poster_check_status["started_at"],
