@@ -296,6 +296,7 @@ async def crawl_xianyu_via_api(
                         logger.info(f"MTOP keys [wrapper.data]: {sorted(_wd.keys())}")
                         logger.info(f"MTOP keys [item_data]: {sorted(item_data.keys())}")
                         logger.info(f"MTOP keys [main]: {sorted(main.keys())}")
+                        logger.info(f"MTOP keys [exContent]: {sorted(ex.keys())}")
                         for _fn in ["userItemCount","sellerItemCount","userId","sellerId",
                                      "memberId","userTotalItems","sellerTotal","publishCount",
                                      "userStats","sellerStats","userInfo","sellerInfo"]:
@@ -492,7 +493,6 @@ async def check_posters_for_agents(
     Returns:
         {"found": int, "suspected": int, "personal": int, "checked": int, "total": int, "error": str | None}
     """
-    import random
     from src.db.schema import get_conn as _get_conn
 
     if not has_valid_cookies():
@@ -527,7 +527,7 @@ async def check_posters_for_agents(
     if not _to_check:
         return {"found": 0, "suspected": 0, "personal": 0, "checked": 0, "total": 0, "error": None}
 
-    # 加载 cookie 并启动浏览器
+    # 加载 cookie
     try:
         cookies = json.loads(COOKIE_FILE.read_text(encoding="utf-8")).get("cookies", [])
     except Exception:
@@ -539,6 +539,7 @@ async def check_posters_for_agents(
     personal = 0
     checked = 0
     total = len(_to_check)
+    db_lock = asyncio.Lock()
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -557,14 +558,15 @@ async def check_posters_for_agents(
         await context.add_cookies(cookies)
         await context.add_init_script(ANTI_DETECT_SCRIPT)
 
-        page = await context.new_page()
+        sem = asyncio.Semaphore(5)
 
-        for _poster, _item_url in _to_check:
-            checked += 1
+        async def _check_one(_poster, _item_url):
+            nonlocal found, suspected, personal, checked
+            page = await context.new_page()
             try:
                 # Step 1: 打开帖子，找到 profile 链接
                 await page.goto(_item_url, wait_until="domcontentloaded", timeout=20000)
-                await page.wait_for_timeout(3000)
+                await page.wait_for_timeout(1500)
 
                 _profile_url = await page.evaluate("""() => {
                     const links = document.querySelectorAll('a[href*="/personal?userId="]');
@@ -572,11 +574,13 @@ async def check_posters_for_agents(
                 }""")
 
                 if not _profile_url:
-                    continue
+                    async with db_lock:
+                        checked += 1
+                    return
 
                 # Step 2: 进卖家主页
                 await page.goto(_profile_url, wait_until="domcontentloaded", timeout=15000)
-                await page.wait_for_timeout(3000)
+                await page.wait_for_timeout(1500)
 
                 # Step 3: 数出租房和总物品数
                 _counts = await page.evaluate("""() => {
@@ -597,72 +601,79 @@ async def check_posters_for_agents(
                 _rental_count = _counts.get("rental", 0)
                 _total_count = _counts.get("total", 0)
 
-                if _rental_count >= 3:
-                    found += 1
-                    logger.info(
-                        f"Poster check [{_poster}]: {_rental_count}/{_total_count} 套出租 → 中介"
-                    )
-                    _conn2 = _get_conn()
-                    try:
-                        _conn2.execute(
-                            "UPDATE listings SET landlord_type='中介' WHERE poster_id=? AND landlord_type!='中介'",
-                            (_poster,),
+                async with db_lock:
+                    checked += 1
+                    if _rental_count >= 3:
+                        found += 1
+                        logger.info(
+                            f"Poster check [{_poster}]: {_rental_count}/{_total_count} 套出租 → 中介"
                         )
-                        _conn2.commit()
-                    finally:
-                        _conn2.close()
-                elif _rental_count >= 2:
-                    suspected += 1
-                    logger.info(
-                        f"Poster check [{_poster}]: {_rental_count}/{_total_count} 套出租 → 疑似中介"
-                    )
-                    _conn2 = _get_conn()
-                    try:
-                        _conn2.execute(
-                            "UPDATE listings SET landlord_type='未知' WHERE poster_id=? AND landlord_type NOT IN ('中介','未知')",
-                            (_poster,),
-                        )
-                        _conn2.commit()
-                    finally:
-                        _conn2.close()
-                elif _rental_count == 1:
-                    if _total_count == 1:
-                        # 只有一条房源且无其他物品 → 疑似中介
+                        _conn2 = _get_conn()
+                        try:
+                            _conn2.execute(
+                                "UPDATE listings SET landlord_type='中介' WHERE poster_id=? AND landlord_type!='中介'",
+                                (_poster,),
+                            )
+                            _conn2.commit()
+                        finally:
+                            _conn2.close()
+                    elif _rental_count >= 2:
                         suspected += 1
                         logger.info(
-                            f"Poster check [{_poster}]: 仅 1 条出租房且无其他物品 → 疑似中介"
+                            f"Poster check [{_poster}]: {_rental_count}/{_total_count} 套出租 → 疑似中介"
                         )
                         _conn2 = _get_conn()
                         try:
                             _conn2.execute(
-                                "UPDATE listings SET landlord_type='未知' WHERE poster_id=? AND landlord_type NOT IN ('中介','未知')",
+                                "UPDATE listings SET landlord_type='疑似中介' WHERE poster_id=? AND landlord_type NOT IN ('中介','疑似中介')",
                                 (_poster,),
                             )
                             _conn2.commit()
                         finally:
                             _conn2.close()
-                    else:
-                        # 有 1 条出租房 + 其他物品 → 个人
-                        personal += 1
-                        logger.info(
-                            f"Poster check [{_poster}]: 1 条出租房 + {_total_count - 1} 件其他物品 → 个人"
-                        )
-                        _conn2 = _get_conn()
-                        try:
-                            _conn2.execute(
-                                "UPDATE listings SET landlord_type='个人' WHERE poster_id=? AND landlord_type!='个人'",
-                                (_poster,),
+                    elif _rental_count == 1:
+                        if _total_count == 1:
+                            # 只有一条房源且无其他物品 → 疑似中介
+                            suspected += 1
+                            logger.info(
+                                f"Poster check [{_poster}]: 仅 1 条出租房且无其他物品 → 疑似中介"
                             )
-                            _conn2.commit()
-                        finally:
-                            _conn2.close()
-
-                # 随机延迟，减轻反爬压力
-                await page.wait_for_timeout(random.randint(1000, 3000))
+                            _conn2 = _get_conn()
+                            try:
+                                _conn2.execute(
+                                    "UPDATE listings SET landlord_type='疑似中介' WHERE poster_id=? AND landlord_type NOT IN ('中介','疑似中介')",
+                                    (_poster,),
+                                )
+                                _conn2.commit()
+                            finally:
+                                _conn2.close()
+                        else:
+                            # 有 1 条出租房 + 其他物品 → 个人
+                            personal += 1
+                            logger.info(
+                                f"Poster check [{_poster}]: 1 条出租房 + {_total_count - 1} 件其他物品 → 个人"
+                            )
+                            _conn2 = _get_conn()
+                            try:
+                                _conn2.execute(
+                                    "UPDATE listings SET landlord_type='个人' WHERE poster_id=? AND landlord_type!='个人'",
+                                    (_poster,),
+                                )
+                                _conn2.commit()
+                            finally:
+                                _conn2.close()
             except Exception:
-                continue
+                async with db_lock:
+                    checked += 1
+            finally:
+                await page.close()
 
-        await page.close()
+        async def _worker(item):
+            async with sem:
+                await _check_one(item[0], item[1])
+
+        await asyncio.gather(*[_worker(item) for item in _to_check])
+
         await browser.close()
 
     return {"found": found, "suspected": suspected, "personal": personal, "checked": checked, "total": total, "error": None}

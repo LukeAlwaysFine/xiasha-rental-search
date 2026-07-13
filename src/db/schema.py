@@ -29,7 +29,7 @@ def init_db(path: str = None) -> sqlite3.Connection:
             lat REAL,                  -- 高德纬度
             area REAL,                 -- 面积 ㎡
             rent_type TEXT,            -- 整租/合租/单间/转租
-            landlord_type TEXT,        -- 个人/中介/未知
+            landlord_type TEXT,        -- 个人/中介/疑似中介
             images TEXT,               -- JSON array of URLs
             source_url TEXT UNIQUE,    -- 原文链接，用于去重
             source_platform TEXT,      -- 豆瓣/闲鱼
@@ -97,7 +97,7 @@ def upsert_listing(conn: sqlite3.Connection, data: dict) -> int | None:
 
     对已存在的记录（同 source_url）：
     - 使用 COALESCE 渐进式填充缺失字段（坐标、图片、户型、面积等）
-    - landlord_type: 从"未知"升级到"个人"/"中介"，但中介不会被降级为个人
+    - landlord_type: 从"疑似中介"升级到"个人"/"中介"，但中介不会被降级为个人
     - publish_time: 回填 NULL 值
 
     注意：此函数不调用 conn.commit()。调用方应在批量操作后统一 commit。
@@ -121,14 +121,16 @@ def upsert_listing(conn: sqlite3.Connection, data: dict) -> int | None:
                     THEN excluded.images ELSE listings.images
                 END,
                 landlord_type = CASE
-                    WHEN listings.landlord_type = '未知' AND excluded.landlord_type != '未知'
+                    WHEN listings.landlord_type = '疑似中介' AND excluded.landlord_type != '疑似中介'
                     THEN excluded.landlord_type
                     ELSE listings.landlord_type
                 END,
                 publish_time = CASE
                     WHEN listings.publish_time IS NULL THEN excluded.publish_time
                     ELSE listings.publish_time
-                END
+                END,
+                poster_id = COALESCE(listings.poster_id, excluded.poster_id),
+                contact = COALESCE(listings.contact, excluded.contact)
         """, (
             data.get("title"),
             data.get("price"),
@@ -138,7 +140,7 @@ def upsert_listing(conn: sqlite3.Connection, data: dict) -> int | None:
             data.get("lat"),
             data.get("area"),
             data.get("rent_type"),
-            data.get("landlord_type", "未知"),
+            data.get("landlord_type", "疑似中介"),
             json.dumps(data.get("images", []), ensure_ascii=False),
             data["source_url"],
             data.get("source_platform"),

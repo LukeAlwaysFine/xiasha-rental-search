@@ -82,7 +82,7 @@ async def process_listing_item(item: dict, conn, sem: asyncio.Semaphore) -> dict
         extracted["_agent_llm_signals"] = detect_meta.get("llm_signals", [])
         extracted["_agent_llm_reasoning"] = detect_meta.get("llm_reasoning", "")
         extracted["_agent_hybrid_score"] = detect_meta.get("hybrid_score", 0)
-        if landlord_type == "未知" and extracted.get("is_sublet"):
+        if landlord_type == "疑似中介" and extracted.get("is_sublet"):
             landlord_type = "个人"
         extracted["landlord_type"] = landlord_type
 

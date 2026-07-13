@@ -276,6 +276,7 @@
   }
   .tag-owner { background: var(--green-bg); color: #1b8c3c; }
   .tag-agent { background: var(--red-bg); color: #d63031; }
+  .tag-unknown { background: var(--blue-bg, #e8ecff); color: #3742fa; }
   .tag-sublet { background: var(--orange-bg); color: #c67e08; }
   .tag-platform { background: #f0f0f5; color: var(--text-secondary); }
   .tag-score { background: var(--blue-bg); color: #2e3ad6; }
@@ -742,6 +743,7 @@
         <label style="margin-left:20px">房东</label>
         <span class="chip" tabindex="0" role="button" data-group="landlord_types" onclick="toggleChip(this,'landlord_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">个人</span>
         <span class="chip" tabindex="0" role="button" data-group="landlord_types" onclick="toggleChip(this,'landlord_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">中介</span>
+        <span class="chip" tabindex="0" role="button" data-group="landlord_types" onclick="toggleChip(this,'landlord_types')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">疑似中介</span>
 
         <label style="margin-left:20px">来源</label>
         <span class="chip" tabindex="0" role="button" data-group="source_platforms" onclick="toggleChip(this,'source_platforms')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">豆瓣</span>
@@ -801,7 +803,7 @@
           <div class="legend-title">图例</div>
           <div class="legend-item"><span class="legend-dot" style="background:#2ed573"></span> 个人房东</div>
           <div class="legend-item"><span class="legend-dot" style="background:#ff4757"></span> 中介</div>
-          <div class="legend-item"><span class="legend-dot" style="background:#3742fa"></span> 未知</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#3742fa"></span> 疑似中介</div>
           <div class="legend-item"><span class="legend-dot" style="background:#f0a500"></span> 地址参考点</div>
         </div>
       </div>
@@ -999,6 +1001,7 @@ function _buildDetailHTML(listing) {
   if (listing.is_sublet) tags.push('<span class="tag tag-sublet">转租</span>');
   if (listing.landlord_type === '个人') tags.push('<span class="tag tag-owner">个人</span>');
   else if (listing.landlord_type === '中介') tags.push('<span class="tag tag-agent">中介</span>');
+  else if (listing.landlord_type === '疑似中介') tags.push('<span class="tag tag-unknown">疑似中介</span>');
   if (listing.source_platform) tags.push('<span class="tag tag-platform">' + escapeHtml(listing.source_platform) + '</span>');
   if (listing._llm_score != null) {
     tags.push('<span class="tag tag-score">⭐' + listing._llm_score + '分</span>');
@@ -1449,6 +1452,7 @@ function renderResults(data, reset) {
     }
     if (l.landlord_type === '个人') tags.push('<span class="tag tag-owner">个人</span>');
     if (l.landlord_type === '中介') tags.push('<span class="tag tag-agent">中介</span>');
+    if (l.landlord_type === '疑似中介') tags.push('<span class="tag tag-unknown">疑似中介</span>');
     if (l.is_sublet) tags.push('<span class="tag tag-sublet">转租</span>');
     tags.push('<span class="tag tag-platform">' + escapeHtml(l.source_platform || '') + '</span>');
 	    if (!l.lng || !l.lat) tags.push('<span class="tag tag-nomap" title="暂无坐标，仅列表展示">📍?</span>');
@@ -1778,7 +1782,7 @@ async function geocodeMissingMarkers() {
             var priceStr = priceEl ? priceEl.textContent.trim() : '';
             var priceMatch = priceStr.match(/(\d+)/);
             var price = priceMatch ? parseInt(priceMatch[1]) : 0;
-            var landlordType = '未知';
+            var landlordType = '疑似中介';
             if (item.card.classList.contains('tag-personal')) landlordType = '个人';
             else if (item.card.classList.contains('tag-agent')) landlordType = '中介';
             var color = landlordType === '个人' ? '#2ed573' : (landlordType === '中介' ? '#ff4757' : '#3742fa');
@@ -2106,7 +2110,7 @@ async function handleCardClick(id) {
       var priceStr = priceEl ? priceEl.textContent.trim() : '';
       var priceMatch = priceStr.match(/(\d+)/);
       var price = priceMatch ? parseInt(priceMatch[1]) : 0;
-      var landlordType = '未知';
+      var landlordType = '疑似中介';
       if (card.classList.contains('tag-personal')) landlordType = '个人';
       else if (card.classList.contains('tag-agent')) landlordType = '中介';
       var color = landlordType === '个人' ? '#2ed573' : (landlordType === '中介' ? '#ff4757' : '#3742fa');
@@ -2375,7 +2379,8 @@ async function triggerPosterCheck() {
   if (btn) { btn.textContent = origText; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
   _resetPosterCheckBtn();
   setTimeout(function() {
-    if (fb && !_posterCheckPollId && _posterCheckRunning === false) {
+    if (_posterCheckPollId) { clearTimeout(_posterCheckPollId); _posterCheckPollId = null; }
+    if (fb && _posterCheckRunning === false) {
       fb.style.display = 'none';
     }
   }, 5000);
@@ -2425,6 +2430,10 @@ function _checkOngoingPosterCheck() {
                 }
               }
               search(true);
+              setTimeout(function() {
+                var fb2 = document.getElementById('fetchProgressBar');
+                if (fb2 && _posterCheckRunning === false) { fb2.style.display = 'none'; }
+              }, 5000);
               return;
             }
             var e = s2.started_at ? _elapsedStr(s2.started_at) : '...';

@@ -177,7 +177,7 @@ async def llm_reevaluate_all(
                 if new_type != old_type:
                     changed[0] += 1
                     reason = llm_result.get("agent_reasoning", "")[:60]
-                    old_label = old_type or "未知"
+                    old_label = old_type or "疑似中介"
                     logger.info(
                         f"[{checked[0]}/{total}] #{listing_id} {old_label}→{new_type} | "
                         f"score={meta['hybrid_score']} | {reason}"

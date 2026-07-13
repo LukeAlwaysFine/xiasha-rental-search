@@ -77,7 +77,7 @@ def detect(content: str, poster_id: str, contact: str = None, conn=None) -> tupl
     判定房东类型。
 
     返回: (标签, [命中规则列表])
-    标签: "个人" / "中介" / "未知"
+    标签: "个人" / "中介" / "疑似中介"
     """
     hits = []
 
@@ -115,7 +115,7 @@ def detect(content: str, poster_id: str, contact: str = None, conn=None) -> tupl
     if len(hits) >= 2 or any(h.startswith("品牌名") for h in hits):
         return "中介", hits
     elif hits:
-        return "未知", hits
+        return "疑似中介", hits
     else:
         return "个人", []
 
@@ -134,7 +134,7 @@ def detect_with_llm(
 
     LLM 信号优先级高于 regex：
     - LLM 高置信 → 直接"中介"
-    - LLM 无 → 直接"个人"（除非 regex 命中品牌名/多房源硬证据）
+    - LLM 无 → "疑似中介"（不靠 Playwright 进主页核实不做个人判断）
     - LLM 中/低 → regex 辅助判定
     - seller_item_count ≥ 3 → 平台级强信号（卖家在闲鱼发布 ≥3 条 → 中介）
 
@@ -214,7 +214,7 @@ def detect_with_llm(
     if llm_agent_confidence == "高":
         return "中介", all_hits, meta
 
-    # 模板标题检测：纯结构描述+无个人语言 → 至少标"未知"
+    # 模板标题检测：纯结构描述+无个人语言 → 至少标"疑似中介"
     # 必须在"LLM 无 → 个人"判断之前执行，否则会死逻辑
     TITLE_TEMPLATE_RE = re.compile(
         r'^[\w一-鿿]+(?:花园|公寓|大厦|小区|城|苑|府|庭|湾|星|里|园)'
@@ -226,11 +226,11 @@ def detect_with_llm(
         if not HAS_PERSONAL_LANG.search(content):
             all_hits.insert(0, "模板标题+无个人语言")
             meta["hybrid_score"] = max(meta["hybrid_score"], 4)
-            return "未知", all_hits, meta
+            return "疑似中介", all_hits, meta
 
-    # LLM 明确说无 + regex 也无强信号 → 个人
+    # LLM 明确说无 + regex 也无强信号 → 疑似中介（不靠 Playwright 进主页核实不做个人判断）
     if llm_agent_confidence == "无" and regex_score < 6:
-        return "个人", all_hits, meta
+        return "疑似中介", all_hits, meta
 
     # 品牌名或硬证据 → 中介
     if regex_score >= 8:
@@ -240,12 +240,12 @@ def detect_with_llm(
     if meta["hybrid_score"] >= 6:
         return "中介", all_hits, meta
 
-    # 混合评分 >= 3 → 疑似（前端显示"未知"）
+    # 混合评分 >= 3 → 疑似中介
     if meta["hybrid_score"] >= 3:
-        return "未知", all_hits, meta
+        return "疑似中介", all_hits, meta
 
-    # 默认个人
-    return "个人", all_hits, meta
+    # 默认疑似中介 — 信息不足不做猜测
+    return "疑似中介", all_hits, meta
 
 
 def is_sublet_from_content(content: str) -> bool:

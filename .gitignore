@@ -10,6 +10,7 @@ venv/
 
 # 数据库
 *.db
+*.db-*
 *.sqlite3
 
 # IDE

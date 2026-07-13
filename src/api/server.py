@@ -822,7 +822,7 @@ async def _import_listings(data: list[dict]) -> int:
             )
         finally:
             detect_conn.close()
-        if landlord_type == "未知" and extracted.get("is_sublet"):
+        if landlord_type == "疑似中介" and extracted.get("is_sublet"):
             landlord_type = "个人"
         extracted["landlord_type"] = landlord_type
         # 优先使用 API 提供的结构化地址
