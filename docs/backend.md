@@ -24,22 +24,21 @@
 
 Playwright 拦截 MTOP API，从 JSON 直接提取结构化字段。MTOP 分页因 sign 校验不可用，策略：**~165 个下沙专项关键词 × ~30 条/词**。
 
-绕过 LLM 的字段：`poster_id`（userNickName）、`api_address`（杭州+area+location）、`api_images`（多字段名合并去重）、`api_lng/api_lat`（6 路径探测，覆盖率 99.8%）。首次 MTOP 响应 dump 所有层级 keys 含 `exContent`，便于排查字段缺失。
+绕过 LLM 的字段：`poster_id`（userNickName 存入，Poster 检查时非数字 ID 从物品页提取数字 userId 回写）、`api_address`（杭州+area+location）、`api_images`（多字段名合并去重）、`api_lng/api_lat`（6 路径探测，覆盖率 99.8%）。首次 MTOP 响应 dump 所有层级 keys 含 `exContent`，便于排查字段缺失。
 
 ⚠️ 反爬：headless 触发 CAPTCHA，依赖首次导航的 API 拦截窗口期。导航用 `wait_until="domcontentloaded"` 超时 15s。
 
 ## 中介检测（纯本地规则，零 LLM 调用）
 
-`detect_with_llm()` 不调 AI。**四条强信号命中即"中介"**：
+`detect_with_llm()` 不调 AI。**三条强信号命中即"中介"**：
 
 | 强信号 | 来源 |
 |------|------|
-| 内容含品牌名（自如、贝壳、链家…） | regex 匹配 |
+| 内容含品牌名/代理词（自如、贝壳、链家、代找房…） | regex 匹配 |
 | poster 昵称含商业词（租房、公寓、管家…） | regex 匹配 |
 | 同 poster ≥3 条 | 数据库统计 |
-| API 卖家房源 ≥3 | MTOP 直接提供 |
 
-四条都不命中 → **"疑似中介"**。Pipeline 永不产出"个人"。
+三条都不命中 → **"疑似中介"**。Pipeline 永不产出"个人"。
 
 弱信号（中介话术如"多套在租""随时看房"、模板化标题无个人语言）→ 也标"疑似中介"。
 
@@ -55,7 +54,7 @@ Playwright 拦截 MTOP API，从 JSON 直接提取结构化字段。MTOP 分页�
 
 `fetch_new_listings()` → `process_listing_item()`（pipeline/deep_dive 共享）→ `extract_listing()` → `_is_valid_rental()` → API 坐标优先 / API 地址覆盖 → geocode 兜底 → `detect_with_llm()` + upsert → `batch_geocode_missing()`。
 
-过滤：`_NON_RENTAL_TITLE_RE`（30+ 非居住关键词），价格 ¥300-50000。过期：`_is_too_old()` 支持 8+ 种日期格式。豆瓣详情 2 次重试。
+过滤：`_NON_RENTAL_TITLE_RE`（30+ 非居住关键词），价格 ¥800-10000。过期：`_is_too_old()` 支持 8+ 种日期格式。豆瓣详情 2 次重试。
 
 ## 数据库
 

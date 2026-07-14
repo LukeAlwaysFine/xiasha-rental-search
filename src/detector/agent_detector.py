@@ -12,6 +12,7 @@ AGENCY_BRANDS = [
     "冠寓", "蛋壳", "青客", "魔方公寓", "YOU+", "优客逸家", "城家公寓",
     "窝趣", "乐乎", "安歆", "美丽屋", "巴乐兔", "蘑菇租房", "房天下",
     "安居客", "58同城", "赶集网",
+    "代找房", "找房服务", "帮找房",
 ]
 
 # 中介话术特征
@@ -167,11 +168,6 @@ def detect_with_llm(
         if count >= 3:
             hits.append(f"同账号{count}条房源")
             return "中介", hits, {"hybrid_score": 10, "regex_hits": hits}
-
-    # 4. 平台级卖家房源 ≥3（MTOP API 直接提供）
-    if seller_item_count is not None and seller_item_count >= 3:
-        hits.append(f"闲鱼卖家{seller_item_count}条房源")
-        return "中介", hits, {"hybrid_score": 10, "regex_hits": hits}
 
     # ——— 弱信号：话术 → 疑似中介 ———
     for pattern in AGENCY_PATTERNS:

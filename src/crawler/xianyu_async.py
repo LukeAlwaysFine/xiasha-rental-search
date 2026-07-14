@@ -59,6 +59,9 @@ def _build_keywords() -> list[str]:
 
 SEARCH_KEYWORDS = _build_keywords()
 
+# 并发抓取 tab 数（可通过环境变量调整，默认 5）
+XIANYU_CONCURRENT_TABS = int(os.getenv("XIANYU_CONCURRENT_TABS", "5"))
+
 ANTI_DETECT_SCRIPT = """
     Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
     Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
@@ -116,6 +119,158 @@ async def do_login():
         await browser.close()
 
 
+def _extract_item_from_mtop(wrapper: dict, _mtop_keys_logged_ref: list[bool]) -> dict | None:
+    """从 MTOP API 单条响应中提取结构化房源数据。
+
+    抽取为独立函数，供单页捕获和翻页 fetch 共用，避免代码重复。
+    _mtop_keys_logged_ref: [False] → 首次提取时 dump 字段名，帮助排查卖家统计字段。
+    """
+    item_data = wrapper.get("data", {}).get("item", {})
+    main = item_data.get("main", {})
+    ex = main.get("exContent", {})
+    click = main.get("clickParam", {}).get("args", {})
+
+    # 首次响应：dump 所有字段名帮助发现卖家统计字段
+    if not _mtop_keys_logged_ref[0]:
+        _mtop_keys_logged_ref[0] = True
+        _wd = wrapper.get("data", {})
+        logger.info(f"MTOP keys [wrapper]: {sorted(wrapper.keys())}")
+        logger.info(f"MTOP keys [wrapper.data]: {sorted(_wd.keys())}")
+        logger.info(f"MTOP keys [item_data]: {sorted(item_data.keys())}")
+        logger.info(f"MTOP keys [main]: {sorted(main.keys())}")
+        logger.info(f"MTOP keys [exContent]: {sorted(ex.keys())}")
+        for _fn in ["userItemCount","sellerItemCount","userId","sellerId",
+                     "memberId","userTotalItems","sellerTotal","publishCount",
+                     "userStats","sellerStats","userInfo","sellerInfo"]:
+            _v = wrapper.get(_fn) or _wd.get(_fn) or item_data.get(_fn) or main.get(_fn)
+            if _v is not None:
+                logger.info(f"MTOP debug: {_fn}={repr(_v)[:200]}")
+
+    if not ex:
+        return None
+
+    title = (ex.get("title") or "").strip()
+    if not title:
+        ts = ex.get("titleSpan", {})
+        title = (ts.get("content") or "").strip()
+
+    price_str = click.get("displayPrice", "") or click.get("price", "")
+    if not price_str:
+        price_arr = ex.get("price", [])
+        for p in price_arr:
+            if p.get("type") == "integer":
+                price_str = p.get("text", "")
+                break
+
+    location = (ex.get("want") or "").strip()
+    area = (ex.get("area") or "").strip()
+    api_address = "杭州"
+    if area and area != location:
+        api_address += area
+    if location:
+        api_address += location
+    api_address = api_address.strip()
+
+    pic_url = ex.get("picUrl") or ex.get("imgUrl") or ex.get("mainPic") or ""
+    poster = (ex.get("userNickName") or "").strip()
+
+    _user_id = (ex.get("userId") or main.get("userId") or main.get("sellerId")
+                or item_data.get("userId") or item_data.get("sellerId") or "")
+    if not _user_id:
+        _user_id = ""
+
+    _seller_item_count = None
+    for _sf in ["userItemCount", "sellerItemCount", "publishCount", "totalItemCount"]:
+        _sv = ex.get(_sf) or main.get(_sf) or item_data.get(_sf) or wrapper.get("data", {}).get(_sf)
+        if _sv is not None and isinstance(_sv, (int, float)):
+            _seller_item_count = int(_sv)
+            break
+
+    pub_ts = click.get("publishTime", "")
+    pub_time = ""
+    if pub_ts and pub_ts.isdigit():
+        from datetime import datetime, timezone
+        pub_time = datetime.fromtimestamp(
+            int(pub_ts) / 1000, tz=timezone.utc
+        ).isoformat()
+
+    # 经纬度提取
+    api_lng = None
+    api_lat = None
+    lng_raw = ex.get("longitude") or ex.get("lng") or click.get("longitude") or click.get("lng")
+    lat_raw = ex.get("latitude") or ex.get("lat") or click.get("latitude") or click.get("lat")
+    if lng_raw is not None and lat_raw is not None:
+        try:
+            api_lng, api_lat = float(lng_raw), float(lat_raw)
+        except (ValueError, TypeError):
+            pass
+    if api_lng is None:
+        loc_obj = ex.get("location") or {}
+        if isinstance(loc_obj, dict):
+            try:
+                api_lng = float(loc_obj.get("lng") or loc_obj.get("longitude") or 0)
+                api_lat = float(loc_obj.get("lat") or loc_obj.get("latitude") or 0)
+                if api_lng == 0 and api_lat == 0:
+                    api_lng = api_lat = None
+            except (ValueError, TypeError):
+                pass
+
+    # 图片收集
+    api_images = []
+    _img_hit_fields = []
+    if pic_url:
+        api_images.append(pic_url)
+        _img_hit_fields.append("picUrl/imgUrl/mainPic")
+    for img_field in ["imgs", "images", "imageList", "imgList", "headPic", "picList", "pics",
+                      "imageUrls", "imgUrls", "picUrls", "photoList", "thumbPics",
+                      "itemImgs", "itemImages", "goodsImgs", "detailImgs",
+                      "imageInfoList", "imgInfoList", "pictUrl", "sellerImgs"]:
+        imgs = ex.get(img_field) or main.get(img_field) or []
+        if isinstance(imgs, list):
+            for img in imgs:
+                if isinstance(img, str) and img not in api_images:
+                    api_images.append(img)
+                elif isinstance(img, dict):
+                    for k in ("url", "picUrl", "imgUrl", "src", "imageUrl", "path"):
+                        v = img.get(k, "")
+                        if v and isinstance(v, str) and v not in api_images:
+                            api_images.append(v)
+            if imgs:
+                _img_hit_fields.append(img_field)
+        elif isinstance(imgs, str) and imgs not in api_images:
+            api_images.append(imgs)
+            _img_hit_fields.append(img_field)
+
+    parts = [title]
+    if price_str:
+        parts.append(f"价格: {price_str}元/月")
+    if location:
+        parts.append(f"位置: {location}")
+    if area:
+        parts.append(f"区域: {area}")
+    if poster:
+        parts.append(f"发布者: {poster}")
+    if api_images:
+        parts.append(f"图片: {', '.join(api_images[:5])}")
+    content = "\n".join(parts)
+
+    item_id = str(ex.get("itemId", ""))
+
+    return {
+        "item_id": item_id,
+        "url": f"https://www.goofish.com/item?id={item_id}",
+        "content": content[:4000],
+        "publish_time": pub_time,
+        "poster_id": poster,
+        "user_id": str(_user_id) if _user_id else "",
+        "seller_item_count": _seller_item_count,
+        "api_address": api_address,
+        "api_images": api_images,
+        "api_lng": api_lng,
+        "api_lat": api_lat,
+    }
+
+
 async def crawl_xianyu_via_api(
     keywords: list[str],
     limit_per_keyword: int = 200,
@@ -127,7 +282,8 @@ async def crawl_xianyu_via_api(
     与 crawl_xianyu_async 不同，本函数：
     - 拦截 h5api.m.goofish.com/mtop.taobao.idlemtopsearch.pc.search 响应
     - 直接从 JSON 解析 title/price/location/images/poster
-    - 滚动触发翻页，每页 30 条，最多翻 max_pages 页
+    - 支持翻页，每页 30 条，最多翻 max_pages 页
+    - 并行处理关键词（Semaphore 限流），默认 5 个 tab 并发
     - 返回格式与旧函数兼容：{"url", "source", "content"}
 
     Returns:
@@ -144,11 +300,17 @@ async def crawl_xianyu_via_api(
 
     state = json.loads(COOKIE_FILE.read_text())
     cookies = state.get("cookies", [])
-    logger.info(f"Xianyu API: loaded {len(cookies)} cookies, searching {len(keywords)} keywords (API mode)")
+    logger.info(
+        f"Xianyu API: loaded {len(cookies)} cookies, "
+        f"searching {len(keywords)} keywords (API mode, {XIANYU_CONCURRENT_TABS} concurrent)"
+    )
 
+    # 共享状态（并行 worker 通过 Lock 保护）
     all_items: list[dict] = []
     global_seen_ids: set[str] = set()
-    _mtop_keys_logged = False  # 首次 MTOP 响应时 dump 字段名
+    seen_lock = asyncio.Lock()
+    items_lock = asyncio.Lock()
+    _mtop_keys_logged = [False]  # list 作为 mutable ref，跨 nested function 共享
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -164,294 +326,160 @@ async def crawl_xianyu_via_api(
         )
         await context.add_cookies(cookies)
         await context.add_init_script(ANTI_DETECT_SCRIPT)
-        page = await context.new_page()
 
-        for kw_idx, keyword in enumerate(keywords):
-            logger.info(f"Xianyu API search [{kw_idx+1}/{len(keywords)}]: {keyword}")
+        sem = asyncio.Semaphore(XIANYU_CONCURRENT_TABS)
+        completed = 0
+        completed_lock = asyncio.Lock()
 
-            # 收集该关键词的所有 API 响应
-            api_responses: list[list[dict]] = []
-            api_request_info = {}  # {url, post_data_template}
-
-            async def capture_response(response):
-                url = response.url
-                if ('mtop.taobao.idlemtopsearch.pc.search' in url
-                        and '.shade' not in url and '/1.0/' in url):
-                    try:
-                        body = await response.text()
-                        data = json.loads(body)
-                        items = data.get("data", {}).get("resultList", [])
-                        if items:
-                            api_responses.append(items)
-                    except Exception:
-                        pass
-
-            async def capture_request(request):
-                url = request.url
-                if ('mtop.taobao.idlemtopsearch.pc.search' in url
-                        and '.shade' not in url and '/1.0/' in url):
-                    if not api_request_info:
-                        api_request_info["url"] = url
-                        api_request_info["post_data"] = request.post_data or ""
-
-            page.on("response", capture_response)
-            page.on("request", capture_request)
-
-            try:
+        async def _search_one(kw_idx: int, keyword: str):
+            """处理单个关键词：开新 page → 拦截 MTOP → 翻页 fetch → 提取。"""
+            nonlocal all_items, completed
+            async with sem:
+                page = await context.new_page()
                 try:
-                    await page.goto(
-                        f"https://www.goofish.com/search?q={keyword}",
-                        wait_until="domcontentloaded",  # 不等 load 事件，headless_shell 可能永不触发
-                        timeout=15000,
-                    )
-                except Exception:
-                    logger.warning(f"  Page load timeout for '{keyword}', skipping")
-                    continue
+                    api_responses: list[list[dict]] = []
+                    api_request_info = {}
 
-                # 等待 API 响应返回（比固定延时更可靠）
-                try:
-                    await page.wait_for_timeout(3000)
-                except Exception:
-                    pass
+                    def _capture_response(response):
+                        url = response.url
+                        if ('mtop.taobao.idlemtopsearch.pc.search' in url
+                                and '.shade' not in url and '/1.0/' in url):
+                            # 异步读取并追加
+                            asyncio.ensure_future(_read_response(response))
 
-                # ——— 通过 fetch() 翻页 ———
-                # 解码 POST body 模板，修改 pageNumber 后逐页请求
-                if api_request_info:
-                    from urllib.parse import unquote
-                    post_data_raw = unquote(api_request_info.get("post_data", ""))
-                    # 去掉 "data=" 前缀
-                    if post_data_raw.startswith("data="):
-                        post_data_raw = post_data_raw[5:]
-
-                    for pn in range(2, max_pages + 1):
+                    async def _read_response(response):
                         try:
-                            new_body = post_data_raw.replace(
-                                '"pageNumber":1', f'"pageNumber":{pn}'
-                            ).replace(
-                                '"pageNumber%22%3A1', f'"pageNumber%22%3A{pn}'
-                            )
-                            result = await page.evaluate("""
-                                async (args) => {
-                                    try {
-                                        const resp = await fetch(args.url, {
-                                            method: 'POST',
-                                            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                                            body: 'data=' + encodeURIComponent(args.body),
-                                            credentials: 'include'
-                                        });
-                                        const text = await resp.text();
-                                        const data = JSON.parse(text);
-                                        const items = data?.data?.resultList || [];
-                                        const hasNext = data?.data?.resultInfo?.hasNextPage;
-                                        return {count: items.length, hasNext: !!hasNext};
-                                    } catch(e) {
-                                        return {count: 0, hasNext: false, error: e.message};
-                                    }
-                                }
-                            """, {"url": api_request_info["url"], "body": new_body})
-                            if result.get("count", 0) == 0:
-                                break
-                            # Re-fetch the actual items via another evaluate call
-                            # (the result only has count, not items, due to serialization)
-                            items_json = await page.evaluate("""
-                                async (args) => {
-                                    const resp = await fetch(args.url, {
-                                        method: 'POST',
-                                        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                                        body: 'data=' + encodeURIComponent(args.body),
-                                        credentials: 'include'
-                                    });
-                                    const text = await resp.text();
-                                    return text;
-                                }
-                            """, {"url": api_request_info["url"], "body": new_body})
-                            if items_json:
-                                resp_data = json.loads(items_json)
-                                items = resp_data.get("data", {}).get("resultList", [])
-                                if items:
-                                    api_responses.append(items)
-                            if not result.get("hasNext"):
-                                break
-                        except Exception as e:
-                            logger.debug(f"  Page {pn} fetch failed: {e}")
-                            break
-            finally:
-                page.remove_listener("response", capture_response)
-                page.remove_listener("request", capture_request)
-
-            # ——— 解析收集到的所有 API item ———
-            keyword_new = 0
-            for page_items in api_responses:
-                for wrapper in page_items:
-                    item_data = wrapper.get("data", {}).get("item", {})
-                    main = item_data.get("main", {})
-                    ex = main.get("exContent", {})
-                    click = main.get("clickParam", {}).get("args", {})
-
-                    # 首次响应：dump 所有字段名帮助发现卖家统计字段
-                    if not _mtop_keys_logged:
-                        _mtop_keys_logged = True
-                        _wd = wrapper.get("data", {})
-                        logger.info(f"MTOP keys [wrapper]: {sorted(wrapper.keys())}")
-                        logger.info(f"MTOP keys [wrapper.data]: {sorted(_wd.keys())}")
-                        logger.info(f"MTOP keys [item_data]: {sorted(item_data.keys())}")
-                        logger.info(f"MTOP keys [main]: {sorted(main.keys())}")
-                        logger.info(f"MTOP keys [exContent]: {sorted(ex.keys())}")
-                        for _fn in ["userItemCount","sellerItemCount","userId","sellerId",
-                                     "memberId","userTotalItems","sellerTotal","publishCount",
-                                     "userStats","sellerStats","userInfo","sellerInfo"]:
-                            _v = wrapper.get(_fn) or _wd.get(_fn) or item_data.get(_fn) or main.get(_fn)
-                            if _v is not None:
-                                logger.info(f"MTOP debug: {_fn}={repr(_v)[:200]}")
-
-                    if not ex:
-                        continue
-
-                    item_id = str(ex.get("itemId", ""))
-                    if not item_id or item_id in global_seen_ids:
-                        continue
-                    global_seen_ids.add(item_id)
-
-                    title = (ex.get("title") or "").strip()
-                    if not title:
-                        ts = ex.get("titleSpan", {})
-                        title = (ts.get("content") or "").strip()
-
-                    price_str = click.get("displayPrice", "") or click.get("price", "")
-                    if not price_str:
-                        price_arr = ex.get("price", [])
-                        for p in price_arr:
-                            if p.get("type") == "integer":
-                                price_str = p.get("text", "")
-                                break
-
-                    location = (ex.get("want") or "").strip()
-                    area = (ex.get("area") or "").strip()
-                    # 构建 API 地址（比 LLM 提取的更结构化，用于 geocode）
-                    api_address = "杭州"
-                    if area and area != location:
-                        api_address += area
-                    if location:
-                        api_address += location
-                    api_address = api_address.strip()
-
-                    pic_url = ex.get("picUrl") or ex.get("imgUrl") or ex.get("mainPic") or ""
-                    poster = (ex.get("userNickName") or "").strip()
-                    # 尝试提取用户 ID 和卖家总房源数（如果 MTOP 响应包含）
-                    _user_id = (ex.get("userId") or main.get("userId") or main.get("sellerId")
-                                or item_data.get("userId") or item_data.get("sellerId") or "")
-                    if not _user_id:
-                        _user_id = ""
-                    _seller_item_count = None
-                    for _sf in ["userItemCount", "sellerItemCount", "publishCount", "totalItemCount"]:
-                        _sv = ex.get(_sf) or main.get(_sf) or item_data.get(_sf) or wrapper.get("data", {}).get(_sf)
-                        if _sv is not None and isinstance(_sv, (int, float)):
-                            _seller_item_count = int(_sv)
-                            break
-                    pub_ts = click.get("publishTime", "")
-                    pub_time = ""
-                    if pub_ts and pub_ts.isdigit():
-                        from datetime import datetime, timezone
-                        pub_time = datetime.fromtimestamp(
-                            int(pub_ts) / 1000, tz=timezone.utc
-                        ).isoformat()
-
-                    # 尝试从 API 提取经纬度（多个可能路径）
-                    api_lng = None
-                    api_lat = None
-                    # 路径 1: exContent 中的 latitude/longitude
-                    lng_raw = ex.get("longitude") or ex.get("lng") or click.get("longitude") or click.get("lng")
-                    lat_raw = ex.get("latitude") or ex.get("lat") or click.get("latitude") or click.get("lat")
-                    if lng_raw is not None and lat_raw is not None:
-                        try:
-                            api_lng, api_lat = float(lng_raw), float(lat_raw)
-                        except (ValueError, TypeError):
+                            body = await response.text()
+                            data = json.loads(body)
+                            items = data.get("data", {}).get("resultList", [])
+                            if items:
+                                api_responses.append(items)
+                        except Exception:
                             pass
-                    # 路径 2: location 嵌套对象
-                    if api_lng is None:
-                        loc_obj = ex.get("location") or {}
-                        if isinstance(loc_obj, dict):
-                            try:
-                                api_lng = float(loc_obj.get("lng") or loc_obj.get("longitude") or 0)
-                                api_lat = float(loc_obj.get("lat") or loc_obj.get("latitude") or 0)
-                                if api_lng == 0 and api_lat == 0:
-                                    api_lng = api_lat = None
-                            except (ValueError, TypeError):
-                                pass
 
-                    # 收集图片 URL（尝试多个字段名变体 — H10: 扩展探测列表提高命中率）
-                    api_images = []
-                    _img_hit_fields = []  # 追踪实际命中字段名
-                    if pic_url:
-                        api_images.append(pic_url)
-                        _img_hit_fields.append("picUrl/imgUrl/mainPic")
-                    # 探测 exContent 和 main 中的图片列表字段
-                    for img_field in ["imgs", "images", "imageList", "imgList", "headPic", "picList", "pics",
-                                      "imageUrls", "imgUrls", "picUrls", "photoList", "thumbPics",
-                                      "itemImgs", "itemImages", "goodsImgs", "detailImgs",
-                                      "imageInfoList", "imgInfoList", "pictUrl", "sellerImgs"]:
-                        imgs = ex.get(img_field) or main.get(img_field) or []
-                        if isinstance(imgs, list):
-                            for img in imgs:
-                                if isinstance(img, str) and img not in api_images:
-                                    api_images.append(img)
-                                elif isinstance(img, dict):
-                                    for k in ("url", "picUrl", "imgUrl", "src", "imageUrl", "path"):
-                                        v = img.get(k, "")
-                                        if v and isinstance(v, str) and v not in api_images:
-                                            api_images.append(v)
-                            if imgs:
-                                _img_hit_fields.append(img_field)
-                        elif isinstance(imgs, str) and imgs not in api_images:
-                            api_images.append(imgs)
-                            _img_hit_fields.append(img_field)
-                    if _img_hit_fields and not api_images:
-                        # 字段名命中但未提取到有效 URL → 记录字段名帮助排查
-                        logger.debug(f"MTOP image fields hit but empty URLs: {_img_hit_fields} for item {item_id}")
+                    def _capture_request(request):
+                        url = request.url
+                        if ('mtop.taobao.idlemtopsearch.pc.search' in url
+                                and '.shade' not in url and '/1.0/' in url):
+                            if not api_request_info:
+                                api_request_info["url"] = url
+                                api_request_info["post_data"] = request.post_data or ""
 
-                    parts = [title]
-                    if price_str:
-                        parts.append(f"价格: {price_str}元/月")
-                    if location:
-                        parts.append(f"位置: {location}")
-                    if area:
-                        parts.append(f"区域: {area}")
-                    if poster:
-                        parts.append(f"发布者: {poster}")
-                    if api_images:
-                        parts.append(f"图片: {', '.join(api_images[:5])}")  # LLM 可见
-                    content = "\n".join(parts)
+                    page.on("response", _capture_response)
+                    page.on("request", _capture_request)
 
-                    url = f"https://www.goofish.com/item?id={item_id}"
-                    all_items.append({
-                        "url": url,
-                        "source": "闲鱼",
-                        "content": content[:4000],
-                        "publish_time": pub_time,  # API 直接提取的时间，绕过 LLM
-                        "poster_id": poster,  # API 直接提取的发帖人，用于中介检测
-                        "user_id": str(_user_id) if _user_id else "",  # 平台用户 ID
-                        "seller_item_count": _seller_item_count,  # 平台卖家总房源数（可能为 None）
-                        "api_address": api_address,  # API 结构化地址，用于 geocode
-                        "api_images": api_images,  # 结构化图片列表，合并到最终结果
-                        "api_lng": api_lng,  # API 经纬度（如果可用，跳过 geocode）
-                        "api_lat": api_lat,
-                    })
-                    keyword_new += 1
+                    try:
+                        try:
+                            await page.goto(
+                                f"https://www.goofish.com/search?q={keyword}",
+                                wait_until="domcontentloaded",
+                                timeout=15000,
+                            )
+                        except Exception:
+                            logger.warning(f"  [{kw_idx+1}/{len(keywords)}] Page timeout: {keyword}")
+                            return
 
-                    if keyword_new >= limit_per_keyword:
-                        break
-                if keyword_new >= limit_per_keyword:
-                    break
+                        # 等待 MTOP 响应到达
+                        await page.wait_for_timeout(3000)
 
-            logger.info(f"  {len(api_responses)} API pages, {keyword_new} new (total: {len(all_items)})")
+                        # ——— 翻页 fetch ———
+                        if api_request_info:
+                            from urllib.parse import unquote
+                            post_data_raw = unquote(api_request_info.get("post_data", ""))
+                            if post_data_raw.startswith("data="):
+                                post_data_raw = post_data_raw[5:]
 
-        await page.close()
+                            for pn in range(2, max_pages + 1):
+                                try:
+                                    new_body = post_data_raw.replace(
+                                        '"pageNumber":1', f'"pageNumber":{pn}'
+                                    ).replace(
+                                        '"pageNumber%22%3A1', f'"pageNumber%22%3A{pn}'
+                                    )
+                                    # 合并 count 探测 + item 拉取为单次 fetch
+                                    items_json = await page.evaluate("""
+                                        async (args) => {
+                                            try {
+                                                const resp = await fetch(args.url, {
+                                                    method: 'POST',
+                                                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                                                    body: 'data=' + encodeURIComponent(args.body),
+                                                    credentials: 'include'
+                                                });
+                                                const text = await resp.text();
+                                                const data = JSON.parse(text);
+                                                const items = data?.data?.resultList || [];
+                                                const hasNext = data?.data?.resultInfo?.hasNextPage;
+                                                return {count: items.length, hasNext: !!hasNext, text: text};
+                                            } catch(e) {
+                                                return {count: 0, hasNext: false, text: '', error: e.message};
+                                            }
+                                        }
+                                    """, {"url": api_request_info["url"], "body": new_body})
+                                    if not items_json.get("count"):
+                                        break
+                                    resp_data = json.loads(items_json["text"])
+                                    items = resp_data.get("data", {}).get("resultList", [])
+                                    if items:
+                                        api_responses.append(items)
+                                    if not items_json.get("hasNext"):
+                                        break
+                                except Exception as e:
+                                    logger.debug(f"  [{kw_idx+1}] Page {pn} failed: {e}")
+                                    break
+                    finally:
+                        page.remove_listener("response", _capture_response)
+                        page.remove_listener("request", _capture_request)
+
+                    # ——— 解析提取 ———
+                    keyword_items = []
+                    for page_items in api_responses:
+                        for wrapper in page_items:
+                            if len(keyword_items) >= limit_per_keyword:
+                                break
+                            extracted = _extract_item_from_mtop(wrapper, _mtop_keys_logged)
+                            if not extracted:
+                                continue
+                            item_id = extracted.pop("item_id")
+                            if not item_id:
+                                continue
+                            async with seen_lock:
+                                if item_id in global_seen_ids:
+                                    continue
+                                global_seen_ids.add(item_id)
+                            extracted["source"] = "闲鱼"
+                            keyword_items.append(extracted)
+                        if len(keyword_items) >= limit_per_keyword:
+                            break
+
+                    async with items_lock:
+                        all_items.extend(keyword_items)
+
+                    async with completed_lock:
+                        completed += 1
+                        logger.info(
+                            f"  [{completed}/{len(keywords)}] {keyword}: "
+                            f"{len(api_responses)} pages, {len(keyword_items)} new "
+                            f"(total: {len(all_items)})"
+                        )
+                finally:
+                    await page.close()
+
+        # 并行运行所有关键词
+        results = await asyncio.gather(
+            *[_search_one(i, kw) for i, kw in enumerate(keywords)],
+            return_exceptions=True,
+        )
+        for r in results:
+            if isinstance(r, Exception):
+                logger.warning(f"Keyword worker exception: {r}")
+
         await browser.close()
 
     logger.info(f"Xianyu API done: {len(all_items)} items from {len(keywords)} keywords")
-    # H10: 汇总图片命中率
     items_with_images = sum(1 for it in all_items if it.get("api_images"))
-    logger.info(f"Xianyu image hit rate: {items_with_images}/{len(all_items)} ({items_with_images*100//max(len(all_items),1)}%)")
+    logger.info(f"Xianyu image hit rate: {items_with_images}/{len(all_items)} "
+                f"({items_with_images*100//max(len(all_items),1)}%)")
     return all_items
 
 
@@ -522,6 +550,17 @@ async def check_posters_for_agents(
             """).fetchall()
             for r in rows:
                 _to_check.append((r[0], r[1]))
+
+            # 追加：没有 poster_id 的闲鱼房源，直接用 source_url 去页面提取
+            _rows_no_poster = _conn.execute("""
+                SELECT source_url
+                FROM listings
+                WHERE (poster_id IS NULL OR poster_id = '' OR poster_id = 'None')
+                  AND source_platform = '闲鱼'
+                  AND (poster_checked_at IS NULL OR poster_checked_at < datetime('now', '-24 hours'))
+            """).fetchall()
+            for r in _rows_no_poster:
+                _to_check.append(('', r[0]))  # poster_id 留空，从页面提取
     finally:
         _conn.close()
 
@@ -565,18 +604,58 @@ async def check_posters_for_agents(
             nonlocal found, suspected, personal, checked
             page = await context.new_page()
             try:
-                # Step 1: 打开帖子，找到 profile 链接
-                await page.goto(_item_url, wait_until="domcontentloaded", timeout=20000)
-                await page.wait_for_timeout(1500)
+                # Step 1: 获取 profile URL
+                # 已知数字 poster_id 时直接拼 URL，昵称型则从物品页提取
+                if _poster and _poster.isdigit():
+                    _profile_url = f"https://www.goofish.com/personal?userId={_poster}"
+                else:
+                    # 无 poster_id 或昵称型：打开帖子页，从 DOM 里找 profile 链接
+                    await page.goto(_item_url, wait_until="domcontentloaded", timeout=20000)
+                    await page.wait_for_timeout(1500)
 
-                _profile_url = await page.evaluate("""() => {
-                    const links = document.querySelectorAll('a[href*="/personal?userId="]');
-                    return links.length > 0 ? links[0].href : '';
-                }""")
+                    _profile_url = await page.evaluate("""() => {
+                        const links = document.querySelectorAll('a[href*="/personal?userId="]');
+                        return links.length > 0 ? links[0].href : '';
+                    }""")
+
+                    # 从 profile URL 提取数字 userId
+                    if _profile_url:
+                        import re as _re
+                        _m = _re.search(r'userId=([^&]+)', _profile_url)
+                        if _m:
+                            _new_id = _m.group(1)
+                            if _new_id and _new_id != _poster:
+                                _conn_patch = _get_conn()
+                                try:
+                                    _conn_patch.execute(
+                                        "UPDATE listings SET poster_id=? WHERE poster_id=?",
+                                        (_new_id, _poster),
+                                    )
+                                    _conn_patch.commit()
+                                finally:
+                                    _conn_patch.close()
+                                _poster = _new_id
+                        elif not _poster:
+                            _poster = _m.group(1) if _m else ""
 
                 if not _profile_url:
                     async with db_lock:
                         checked += 1
+                        _conn_noprofile = _get_conn()
+                        try:
+                            if _poster:
+                                _conn_noprofile.execute(
+                                    "UPDATE listings SET poster_checked_at=datetime('now') WHERE poster_id=?",
+                                    (_poster,),
+                                )
+                            else:
+                                _conn_noprofile.execute(
+                                    "UPDATE listings SET poster_checked_at=datetime('now') WHERE source_url=?",
+                                    (_item_url,),
+                                )
+                            _conn_noprofile.commit()
+                        finally:
+                            _conn_noprofile.close()
                     return
 
                 # Step 2: 进卖家主页
@@ -612,7 +691,17 @@ async def check_posters_for_agents(
                     elif _rental_count == 1:
                         poster_result = "疑似中介" if _total_count == 1 else "个人"
                     else:
-                        return  # 无出租房，跳过
+                        # 无出租房 → 标记已检查，不再重试
+                        _conn_empty = _get_conn()
+                        try:
+                            _conn_empty.execute(
+                                "UPDATE listings SET poster_checked_at=datetime('now') WHERE poster_id=?",
+                                (_poster,),
+                            )
+                            _conn_empty.commit()
+                        finally:
+                            _conn_empty.close()
+                        return
 
                     # 读取 pipeline 判定（detect_with_llm 的初始结果）
                     _conn2 = _get_conn()

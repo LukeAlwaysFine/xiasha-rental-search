@@ -132,8 +132,7 @@ _NON_RENTAL_TITLE_RE = re.compile(
     r'健身房出租|健身房转让|健身房年卡|健身房会员|'
     r'瑜伽出租|瑜伽转让|瑜伽年卡|瑜伽会员|'
     r'舞蹈室出租|舞蹈室转让|舞蹈室年卡|舞蹈室会员|'
-    r'画室|工作室出租|'
-    r'代找|帮忙找|帮找|代找房|找房服务)',
+    r'画室|工作室出租)',
     re.IGNORECASE
 )
 def _parse_llm_concurrency(default: int = 40) -> int:
@@ -145,8 +144,8 @@ def _parse_llm_concurrency(default: int = 40) -> int:
         return default
 
 
-_MIN_VALID_PRICE = 300   # 低于此价格可能是车位/杂物间等非居住房源
-_MAX_VALID_PRICE = 50000  # 超过此价格可能是商铺/写字楼等商用房源
+_MIN_VALID_PRICE = 800   # 低于此价格可能是代找房服务/车位/杂物间等非真实房源
+_MAX_VALID_PRICE = 10000  # 超过此价格可能是商铺/写字楼等商用房源
 
 
 def _is_valid_rental(extracted: dict) -> bool:

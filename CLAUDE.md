@@ -30,9 +30,9 @@
 
 ## 关键决策
 
-- **poster_id**: MTOP `userNickName` 提取，UPSERT COALESCE 回填。MTOP 首响应 dump exContent keys 便于排查
-- **中介判定**: 零 LLM 调用。四条强信号直判中介（品牌名/昵称商业词/同poster≥3/API卖家≥3）。"个人"唯一来源是 Playwright 进主页核实（1出租+有其他物品）。Poster 与 pipeline 融合，缓存：个人24h/疑似中介6h
-- **Poster 检查**: 5 并发 tab（Semaphore + asyncio.gather）。判定四档（≥3→中介，2→疑似中介，1+无其他→疑似中介，1+有其他→个人）。抓取后自动触发 + 每 6h 定时
+- **poster_id**: MTOP `userNickName` 存入，Poster 检查时非数字 poster_id 从物品页提取数字 userId 并回写 DB。MTOP 首响应 dump exContent keys 便于排查
+- **中介判定**: 零 LLM 调用。三条强信号直判中介（品牌名/昵称商业词/同poster≥3）。"个人"唯一来源是 Playwright 进主页核实（1出租+有其他物品）。Poster 与 pipeline 融合，缓存：个人24h/疑似中介6h
+- **Poster 检查**: 5 并发 tab（Semaphore + asyncio.gather）。判定四档（≥3→中介，2→疑似中介，1+无其他→疑似中介，1+有其他→个人）。手动触发始终全量重判（先清 poster_checked_at）。抓取后自动触发 + 每 6h 定时
 - **UPSERT**: 零值覆盖防 LLM 幻觉，poster_id/contact COALESCE 回填
 - **前端竞态**: `_posterCheckPollId` 主动 clearTimeout 防残留
 

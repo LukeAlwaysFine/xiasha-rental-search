@@ -253,6 +253,7 @@
   .listing-card.tag-personal { border-left-color: var(--green); }
   .listing-card.tag-agent { border-left-color: var(--red); }
   .listing-card.tag-unknown { border-left-color: var(--blue); }
+  .listing-card.viewed { opacity: 0.5 !important; }
   .listing-card .card-body { display: flex; padding: 16px; gap: 14px; }
   .listing-card .content-area { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
   .listing-card .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
@@ -266,8 +267,8 @@
   }
   .listing-card .meta { font-size: 13px; color: var(--text-secondary); display: flex; flex-wrap: wrap; gap: 4px 14px; }
   .listing-card .meta span { white-space: nowrap; }
-  .listing-card .meta-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-  .listing-card .contact-info { font-size: 13px; color: var(--text-secondary); }
+  .listing-card .meta-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .listing-card .contact-info { font-size: 13px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .listing-card .actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
   .listing-card .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
   .tag {
@@ -684,7 +685,7 @@
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         <button class="header-fav-btn" id="fetchBtn" onclick="triggerManualFetch()" title="手动抓取新房源" style="gap:4px">🔄 抓取房源</button>
-        <button class="header-fav-btn" id="posterCheckBtn" onclick="triggerPosterCheck()" title="检查闲鱼发帖人主页，识别中介" style="gap:4px">🔍 检查是否中介</button>
+        <button class="header-fav-btn" id="posterCheckBtn" onclick="triggerPosterCheck()" title="全部发帖人重新判定" style="gap:4px">🔍 检查是否中介</button>
         <button class="header-fav-btn" id="themeToggle" onclick="toggleTheme()" title="切换暗色模式" style="width:42px;padding:10px;justify-content:center" aria-label="切换暗色模式">🌙</button>
         <button class="header-fav-btn" id="headerFavBtn" onclick="toggleFavFilter()" title="查看收藏">
           ♥ 我的收藏 <span class="fav-count">0</span>
@@ -825,6 +826,7 @@ let _pollEnhanceId = null, _pollFetchId = null, _pollNewDataId = null, _lastKnow
 var _detailPanelId = null;
 var _detailPanelLoading = false;
 var _detailPanelAbortController = null;
+var _viewedIds = {};  // 已查看卡片 ID → true，刷新即清
 
 function initDetailPanel() {
   var overlay = document.getElementById('detailPanelOverlay');
@@ -842,6 +844,11 @@ function initDetailPanel() {
 }
 
 function openDetailPanel(id) {
+  // 标记已查看
+  _viewedIds[id] = true;
+  var card = document.getElementById('card-' + id);
+  if (card) card.classList.add('viewed');
+
   if (_detailPanelId === id && !_detailPanelLoading) {
     closeDetailPanel();
     return;
@@ -1253,8 +1260,9 @@ async function search(reset) {
     // 收藏模式下不触发后台补数据
     if (!favoritesOnly && reset && !data.enhance_key && data.listings && data.listings.length < 20) { _isFetching = true;
       var polls2 = 0;
+      _bgFetchStartTs = Date.now() / 1000;
       var sbFetch = document.getElementById('statusBar');
-      if (sbFetch) { sbFetch.innerHTML = '🔄 正在搜索更多房源...'; sbFetch.style.display = 'block'; sbFetch.classList.add('fetching'); }
+      if (sbFetch) { sbFetch.innerHTML = '🔄 正在搜索更多房源... ' + _elapsedStr(_bgFetchStartTs); sbFetch.style.display = 'block'; sbFetch.classList.add('fetching'); }
       _pollFetchId = setInterval(async function() {
         polls2++;
         try {
@@ -1267,20 +1275,20 @@ async function search(reset) {
             _lastKnownTotal = fd.total;  // M3: 同步更新，防止 30s 轮询误报
             renderResults({listings: newItems, total: fd.total}, false);
             var sb = document.getElementById('statusBar');
-            if (sb) sb.innerHTML = '🔄 已加载更多房源 · ' + st.offset + ' / ' + fd.total + ' 套';
+            if (sb) sb.innerHTML = '🔄 已加载更多房源 · ' + st.offset + ' / ' + fd.total + ' 套 · 已运行 ' + _elapsedStr(_bgFetchStartTs);
           }
           if (fd.listings.length >= 20) {
             clearInterval(_pollFetchId); _pollFetchId = null; _isFetching = false;
             var sbDone2 = document.getElementById('statusBar'); if (sbDone2) sbDone2.classList.remove('fetching');
             var sbDone = document.getElementById('statusBar');
-            if (sbDone && sbDone.innerHTML.indexOf('搜索更多') >= 0) { sbDone.innerHTML = '✅ 房源更新完成 · 共' + fd.total + '套'; }
+            if (sbDone && sbDone.innerHTML.indexOf('搜索更多') >= 0) { sbDone.innerHTML = '✅ 房源更新完成 · 共' + fd.total + '套 · 耗时 ' + _elapsedStr(_bgFetchStartTs); }
           }
         } catch(e) { /* silent */ }
         if (polls2 >= 10) {
           clearInterval(_pollFetchId); _pollFetchId = null; _isFetching = false;
           var sbTimeout2 = document.getElementById('statusBar'); if (sbTimeout2) sbTimeout2.classList.remove('fetching');
           var sbTimeout = document.getElementById('statusBar');
-          if (sbTimeout && sbTimeout.innerHTML.indexOf('搜索更多') >= 0) { sbTimeout.innerHTML = '⏳ 后台搜索超时，请稍后刷新'; }
+          if (sbTimeout && sbTimeout.innerHTML.indexOf('搜索更多') >= 0) { sbTimeout.innerHTML = '⏳ 后台搜索超时，请稍后刷新 · 已运行 ' + _elapsedStr(_bgFetchStartTs); }
         }
       }, 3000);
     }
@@ -1460,6 +1468,7 @@ function renderResults(data, reset) {
 
     var favClass = isFav(l.source_url, l.id) ? 'active' : '';
     var cardClass = 'listing-card tag-' + (l.landlord_type === '个人' ? 'personal' : (l.landlord_type === '中介' ? 'agent' : 'unknown'));
+    if (_viewedIds[l.id]) cardClass += ' viewed';
 
     html += '<div class="' + cardClass + '" id="card-' + l.id + '" data-address="' + escapeAttr(l.address || '') + '" style="animation-delay:' + (i * 0.03).toFixed(2) + 's">';
     html += '<div class="card-body">';
@@ -1481,8 +1490,8 @@ function renderResults(data, reset) {
     html += '<div class="meta-row">';
     html += '<span class="contact-info">' + distStr + (l.contact ? '📞 ' + escapeHtml(l.contact) : '') + (l.publish_time ? ' · ' + timeAgo(l.publish_time) : '') + '</span>';
     html += '<span class="actions">';
-    html += '<button class="fav-btn ' + favClass + '" data-url="' + escapeAttr(l.source_url || '') + '" data-id="' + l.id + '" onclick="var u=this.getAttribute(\'data-url\');var i=parseInt(this.getAttribute(\'data-id\'));event.stopPropagation();toggleFav(u,i)" title="' + (favClass ? '取消收藏' : '收藏') + '" aria-label="' + (favClass ? '取消收藏' : '收藏') + '">♥</button>';
-    html += '<a href="' + safeUrl(l.source_url) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="source-link">查看原帖 →</a>';
+    html += '<button class="fav-btn ' + favClass + '" data-url="' + escapeAttr(l.source_url || '') + '" data-id="' + l.id + '" onclick="var u=this.getAttribute(\'data-url\');var i=parseInt(this.getAttribute(\'data-id\'));_viewedIds[i]=true;this.closest(\'.listing-card\').classList.add(\'viewed\');event.stopPropagation();toggleFav(u,i)" title="' + (favClass ? '取消收藏' : '收藏') + '" aria-label="' + (favClass ? '取消收藏' : '收藏') + '">♥</button>';
+    html += '<a href="' + safeUrl(l.source_url) + '" target="_blank" rel="noopener" onclick="_viewedIds[' + l.id + ']=true;this.closest(\'.listing-card\').classList.add(\'viewed\');event.stopPropagation()" class="source-link">查看原帖 →</a>';
     html += '</span>';
     html += '</div>';
     html += '<div class="tags">' + tags.join('') + '</div>';
@@ -1963,6 +1972,7 @@ function highlightMarker(marker) {
           tags.push('<span class="tag tag-platform">' + escapeHtml(l.source_platform || '') + '</span>');
 	    if (!l.lng || !l.lat) tags.push('<span class="tag tag-nomap" title="暂无坐标，仅列表展示">📍?</span>');
           var cardClass = 'listing-card tag-' + (l.landlord_type === '个人' ? 'personal' : (l.landlord_type === '中介' ? 'agent' : 'unknown'));
+          if (_viewedIds[l.id]) cardClass += ' viewed';
           var html = '<div class="' + cardClass + '" id="card-' + l.id + '" data-address="' + escapeAttr(l.address || '') + '" style="animation:none;border:2px solid ' + color + '">';
           html += '<div class="card-body"><div class="content-area"><div class="top">';
           html += '<span class="title">' + escapeHtml(l.title || '无标题') + '</span>';
@@ -2206,6 +2216,7 @@ var _fetchRunning = false;
 var _posterCheckPollId = null;
 var _posterCheckRunning = false;
 var _lastPosterCheckAt = null;
+var _bgFetchStartTs = null;
 
 function _elapsedStr(startTs) {
   if (!startTs) return '';
@@ -2321,9 +2332,9 @@ async function triggerPosterCheck() {
   var fb = document.getElementById('fetchProgressBar');
   var origText = btn ? btn.textContent : '';
   if (btn) { btn.textContent = '⏳ 检查中...'; btn.style.opacity = '0.7'; btn.style.pointerEvents = 'none'; }
-  if (fb) { fb.innerHTML = '🔍 正在检查发帖人主页...'; fb.style.display = 'block'; }
+  if (fb) { fb.innerHTML = '🔄 正在全部重新判定...'; fb.style.display = 'block'; }
 
-  var checkPromise = fetch('/api/poster-check', { method: 'POST' });
+  var checkPromise = fetch('/api/poster-check?reset=true', { method: 'POST' });
 
   function _pollStatus() {
     if (!_posterCheckRunning) return;

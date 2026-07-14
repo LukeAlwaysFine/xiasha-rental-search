@@ -660,15 +660,15 @@ async def trigger_fetch(request: Request):
         _fetch_status["error"] = None
 
         # 入库后自动触发一次 Poster 检查（fire-and-forget，不阻塞响应）
-        if len(new_listings) > 0:
-            async def _auto_poster_check():
-                await asyncio.sleep(2)
-                try:
-                    from src.crawler.xianyu_async import check_posters_for_agents
-                    await check_posters_for_agents(headless=True)
-                except Exception as e:
-                    logger.warning(f"auto_poster_check failed: {e}")
-            asyncio.create_task(_auto_poster_check())
+        # 每次都跑 — check_posters_for_agents 内部有 poster_checked_at 缓存，会自动跳过已检查的
+        async def _auto_poster_check():
+            await asyncio.sleep(2)
+            try:
+                from src.crawler.xianyu_async import check_posters_for_agents
+                await check_posters_for_agents(headless=True)
+            except Exception as e:
+                logger.warning(f"auto_poster_check failed: {e}")
+        asyncio.create_task(_auto_poster_check())
 
         return {"new_count": len(new_listings)}
     except Exception as e:
@@ -704,6 +704,18 @@ async def trigger_poster_check(request: Request):
     )
     if not _check_rate_limit(client_ip, _RATE_MAX_POSTER_CHECK, "poster_check"):
         return JSONResponse({"error": "请求过于频繁，请稍后再试"}, status_code=429)
+
+    # ?reset=true 清除所有 poster_checked_at 缓存，全量重判
+    _reset = request.query_params.get("reset", "").lower() == "true"
+    if _reset:
+        from src.db.schema import get_conn
+        _conn_reset = get_conn()
+        try:
+            _conn_reset.execute("UPDATE listings SET poster_checked_at = NULL")
+            _conn_reset.commit()
+            logger.info("poster-check: 已清除所有 poster_checked_at 缓存，准备全量重判")
+        finally:
+            _conn_reset.close()
 
     _poster_check_status = {
         "running": True, "found": 0, "suspected": 0, "personal": 0, "checked": 0, "total": 0,
